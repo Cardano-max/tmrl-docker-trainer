@@ -1,213 +1,282 @@
 """
-Custom TMRL trainer with JSON logging to database container
-Hooks into TMRL's training loop to log episodes, states, and metrics
+TMRL Enhanced Trainer with Database Feedback
+Real bidirectional communication for knowledge graph research
 """
 import os
 import json
 import time
+import numpy as np
 from datetime import datetime
 import sys
+import traceback
 
 DATABASE_PATH = os.getenv('DATABASE_PATH', '/shared-data')
 
-class JSONLogger:
-    """Logs training data to JSON files in database volume"""
+class TransitionLogger:
+    """Logs complete SARS' transitions with database feedback"""
     
     def __init__(self, base_path):
         self.base_path = base_path
-        self.episode_count = 0
-        self.step_count = 0
-        self.last_log_time = time.time()
+        self.logged_count = 0
+        self.last_memory_size = None
+        self.initialized = False
         
-        # Create directory structure
-        os.makedirs(f"{base_path}/episodes", exist_ok=True)
-        os.makedirs(f"{base_path}/states", exist_ok=True)
-        os.makedirs(f"{base_path}/actions", exist_ok=True)
+        # DATABASE FEEDBACK SYSTEM
+        self.db_config = {"reward_scale": 1.0, "constraints": []}
+        self.config_path = os.path.join(base_path, "db_to_trainer", "config.json")
+        self.last_config_check = 0
+        
+        os.makedirs(f"{base_path}/transitions", exist_ok=True)
         os.makedirs(f"{base_path}/metrics", exist_ok=True)
         
-        print(f"[DATABASE] JSON Logger initialized")
-        print(f"[DATABASE] Storage path: {base_path}")
-        
-    def log_sample(self, sample_data):
-        """Log training sample"""
+        print("[DATABASE] Transition Logger initialized with feedback system")
+    
+    def _serialize(self, obj):
+        """Convert to JSON"""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (np.floating, np.integer)):
+            return float(obj)
+        elif isinstance(obj, (list, tuple)):
+            return [self._serialize(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: self._serialize(v) for k, v in obj.items()}
+        else:
+            return obj
+    
+    def _load_db_config(self):
+        """Load configuration from database analyzer"""
         try:
-            filename = f"{self.base_path}/states/sample_{self.step_count:08d}.json"
-            
-            # Convert to serializable format
-            data = {
-                'sample_id': self.step_count,
-                'timestamp': datetime.now().isoformat(),
-                'data': str(sample_data)[:500]  # Truncate for storage
-            }
-            
-            with open(filename, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            self.step_count += 1
-            
-            # Log every 100 samples
-            if self.step_count % 100 == 0:
-                print(f"[DATABASE] Logged {self.step_count} samples")
-                
-        except Exception as e:
-            print(f"[DATABASE] Error logging sample: {e}")
-        
-    def log_episode(self, episode_num, total_reward, steps):
-        """Log episode summary"""
-        try:
-            filename = f"{self.base_path}/episodes/episode_{episode_num:06d}.json"
-            
-            data = {
-                'episode_id': episode_num,
-                'timestamp': datetime.now().isoformat(),
-                'total_reward': float(total_reward),
-                'steps': int(steps)
-            }
-            
-            with open(filename, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            self.episode_count = episode_num
-            print(f"[DATABASE] Logged episode {episode_num}: reward={total_reward:.2f}, steps={steps}")
-            
-        except Exception as e:
-            print(f"[DATABASE] Error logging episode: {e}")
-        
-    def log_metrics(self, metrics_dict):
-        """Log training metrics"""
-        try:
-            # Only log periodically (every 10 seconds)
             current_time = time.time()
-            if current_time - self.last_log_time < 10:
+            # Check every 30 seconds to avoid excessive file I/O
+            if current_time - self.last_config_check < 30:
                 return
             
-            self.last_log_time = current_time
+            self.last_config_check = current_time
             
-            timestamp = int(time.time())
-            filename = f"{self.base_path}/metrics/metrics_{timestamp}.json"
+            if os.path.exists(self.config_path):
+                with open(self.config_path, "r") as f:
+                    cfg = json.load(f)
+                
+                # Extract trainer parameters
+                old_scale = self.db_config.get("reward_scale", 1.0)
+                new_scale = cfg.get("trainer_parameters", {}).get("reward_scale", 1.0)
+                
+                # Notify if config changed
+                if old_scale != new_scale:
+                    print(f"[DATABASE] ✓ DB feedback received: reward_scale {old_scale} → {new_scale}")
+                    stats = cfg.get("statistics", {})
+                    print(f"[DATABASE]   Based on: {cfg.get('num_transitions_analyzed', 0)} transitions")
+                    print(f"[DATABASE]   Avg reward: {stats.get('avg_reward', 0):.4f}")
+                
+                # Update internal config
+                self.db_config = {
+                    "reward_scale": new_scale,
+                    "constraints": cfg.get("trainer_parameters", {}).get("constraints", []),
+                    "statistics": cfg.get("statistics", {}),
+                    "timestamp": cfg.get("timestamp", "")
+                }
+                
+        except Exception as e:
+            # Silent fail - use default config
+            pass
+    
+    def log_new_transitions(self, memory):
+        """Log new transitions"""
+        try:
+            current_size = len(memory)
             
+            # Initialize on first call
+            if not self.initialized:
+                self.last_memory_size = current_size
+                self.initialized = True
+                print(f"[DATABASE] Starting logging from memory position {current_size}")
+                # Try to load config immediately
+                self._load_db_config()
+                return
+            
+            # Check for new transitions
+            if current_size > self.last_memory_size:
+                new_count = current_size - self.last_memory_size
+                print(f"[DATABASE] Logging {new_count} new transitions (memory: {self.last_memory_size} → {current_size})")
+                
+                # Log each new transition
+                logged_this_batch = 0
+                for idx in range(self.last_memory_size, current_size):
+                    try:
+                        transition = memory.get_transition(idx)
+                        self.log_transition(transition, idx)
+                        logged_this_batch += 1
+                        
+                        # Progress every 100
+                        if logged_this_batch % 100 == 0:
+                            print(f"[DATABASE]   ... {logged_this_batch}/{new_count} done")
+                            
+                    except Exception as e:
+                        print(f"[DATABASE] Error at idx {idx}: {e}")
+                        traceback.print_exc()
+                        continue
+                
+                self.last_memory_size = current_size
+                print(f"[DATABASE] ✓ Batch complete! Total logged: {self.logged_count}")
+        
+        except Exception as e:
+            print(f"[DATABASE] ERROR in log_new_transitions: {e}")
+            traceback.print_exc()
+    
+    def log_transition(self, trans, idx):
+        """Log single transition with database feedback"""
+        try:
+            # Load DB config periodically
+            self._load_db_config()
+            
+            self.logged_count += 1
+            filename = f"{self.base_path}/transitions/transition_{self.logged_count:08d}.json"
+            
+            # Unpack transition
+            obs = trans[0] if len(trans) > 0 else None
+            act = trans[1] if len(trans) > 1 else None
+            rew = trans[2] if len(trans) > 2 else 0.0
+            next_obs = trans[3] if len(trans) > 3 else None
+            done = trans[4] if len(trans) > 4 else False
+            truncated = trans[5] if len(trans) > 5 else False
+            
+            # APPLY DATABASE FEEDBACK
+            reward_scale = float(self.db_config.get("reward_scale", 1.0))
+            adjusted_reward = float(rew) * reward_scale
+            
+            # Build transition data with feedback
             data = {
+                'transition_id': self.logged_count,
+                'memory_idx': idx,
                 'timestamp': datetime.now().isoformat(),
-                'metrics': metrics_dict
+                
+                'state': self._parse_obs(obs),
+                'action': self._parse_action(act),
+                
+                'reward': float(rew),
+                'adjusted_reward': adjusted_reward,  # ← USING DB FEEDBACK!
+                
+                'db_feedback': {
+                    'reward_scale': reward_scale,
+                    'constraints': self.db_config.get("constraints", []),
+                    'statistics': self.db_config.get("statistics", {}),
+                    'last_update': self.db_config.get("timestamp", "")
+                },
+                
+                'next_state': self._parse_obs(next_obs),
+                'done': bool(done),
+                'truncated': bool(truncated)
             }
             
             with open(filename, 'w') as f:
                 json.dump(data, f, indent=2)
-            
-            print(f"[DATABASE] Logged metrics: memory_len={metrics_dict.get('memory_len', 'N/A')}")
-            
+                
         except Exception as e:
-            print(f"[DATABASE] Error logging metrics: {e}")
+            print(f"[DATABASE] Error logging: {e}")
+            traceback.print_exc()
+    
+    def _parse_obs(self, obs):
+        """Parse TMRL observation (speed + LIDAR)"""
+        try:
+            if obs is None:
+                return None
+            
+            result = {"type": "tmrl_lidar"}
+            
+            if isinstance(obs, tuple) and len(obs) >= 2:
+                speed = obs[0]
+                lidar = obs[1]
+                
+                # Parse speed
+                if isinstance(speed, np.ndarray):
+                    result['speed'] = float(speed[0]) if len(speed) > 0 else 0.0
+                
+                # Parse LIDAR
+                if isinstance(lidar, np.ndarray):
+                    result['lidar'] = lidar.tolist()
+            
+            return result
+        except:
+            return {"error": "parse_failed"}
+    
+    def _parse_action(self, act):
+        """Parse action [gas, brake, steering]"""
+        try:
+            if act is None:
+                return None
+            
+            if isinstance(act, np.ndarray) and len(act) >= 3:
+                return {
+                    'gas': float(act[0]),
+                    'brake': float(act[1]),
+                    'steering': float(act[2])
+                }
+            return {"raw": self._serialize(act)}
+        except:
+            return {"error": "parse_failed"}
 
-# Initialize logger
-print("[DATABASE] Initializing JSON database logger...")
-logger = JSONLogger(DATABASE_PATH)
+# Initialize
+print("="*60)
+print("[DATABASE] Initializing Production Logger with Feedback...")
+print("="*60)
+logger = TransitionLogger(DATABASE_PATH)
 
-# Write initial status
-status_file = f"{DATABASE_PATH}/status.json"
-with open(status_file, 'w') as f:
+with open(f"{DATABASE_PATH}/status.json", 'w') as f:
     json.dump({
-        'status': 'initialized',
+        'status': 'production_with_feedback',
         'timestamp': datetime.now().isoformat(),
-        'database_path': DATABASE_PATH
+        'version': '2.0'
     }, f, indent=2)
 
-print("[DATABASE] Database logging enabled")
-print(f"[DATABASE] Status file created: {status_file}")
-
-# Monkey-patch TMRL's TrainingOffline class to intercept data
-print("[TRAINER] Patching TMRL training loop for database logging...")
+# Patch TMRL
+print("[TRAINER] Patching TMRL...")
 
 from tmrl.training_offline import TrainingOffline
 
-# Save original run_epoch method
 original_run_epoch = TrainingOffline.run_epoch
 
 def patched_run_epoch(self, interface):
-    """Patched version that logs data"""
+    """Patched version with logging"""
     
-    # Log metrics before training
-    try:
-        metrics = {
-            'memory_len': len(self.memory) if hasattr(self, 'memory') else 0,
-            'epoch': self.epoch if hasattr(self, 'epoch') else 0,
-        }
-        logger.log_metrics(metrics)
-    except Exception as e:
-        print(f"[DATABASE] Error in pre-epoch logging: {e}")
+    print("[DATABASE] ═══ run_epoch called ═══")
     
-    # Call original method
+    # Call original
     result = original_run_epoch(self, interface)
     
-    # Log metrics after training
+    # Log transitions
+    print("[DATABASE] ═══ Logging transitions ═══")
     try:
-        if hasattr(result, 'to_dict'):
-            metrics_dict = result.to_dict()
-        elif isinstance(result, dict):
-            metrics_dict = result
+        if hasattr(self, 'memory'):
+            logger.log_new_transitions(self.memory)
         else:
-            metrics_dict = {'result': str(result)}
-        
-        logger.log_metrics(metrics_dict)
+            print("[DATABASE] ERROR: No memory attribute!")
     except Exception as e:
-        print(f"[DATABASE] Error in post-epoch logging: {e}")
+        print(f"[DATABASE] EXCEPTION in logging: {e}")
+        traceback.print_exc()
     
     return result
 
-# Apply monkey patch
 TrainingOffline.run_epoch = patched_run_epoch
-print("[TRAINER] Training loop patched successfully")
+print("[TRAINER] ✓ Patch applied - ready for DB feedback")
+print("="*60)
 
-# Also patch memory append to log samples
-try:
-    from tmrl.memory import TorchMemory
-    
-    original_append = TorchMemory.append
-    
-    def patched_append(self, buffer):
-        """Patched append that logs samples"""
-        result = original_append(self, buffer)
-        
-        # Log sample periodically
-        if len(self) % 50 == 0:  # Every 50 samples
-            try:
-                logger.log_sample({
-                    'memory_size': len(self),
-                    'buffer_size': len(buffer) if hasattr(buffer, '__len__') else 'unknown'
-                })
-            except Exception as e:
-                print(f"[DATABASE] Error logging sample: {e}")
-        
-        return result
-    
-    TorchMemory.append = patched_append
-    print("[TRAINER] Memory logging patched successfully")
-    
-except Exception as e:
-    print(f"[TRAINER] Could not patch memory logging: {e}")
-
-# Now run standard TMRL trainer
-print("[TRAINER] Starting TMRL trainer with database logging...")
-
-# Import and parse arguments properly
+# Start TMRL
 import argparse
 from tmrl import __main__ as tmrl_main_module
 
-
-# Create argument parser (complete with ALL TMRL arguments)
 parser = argparse.ArgumentParser()
-parser.add_argument('--server', action='store_true', help='launches the server')
-parser.add_argument('--trainer', action='store_true', help='launches the trainer')
-parser.add_argument('--worker', action='store_true', help='launches a worker')
-parser.add_argument('--test', action='store_true', help='runs a simple training test')
-parser.add_argument('--benchmark', action='store_true', help='runs benchmark')
-parser.add_argument('--expert', action='store_true', help='runs expert')
-parser.add_argument('--wandb', action='store_true', help='enables wandb logging')
-parser.add_argument('--profile', action='store_true', help='enables profiling')
+parser.add_argument('--server', action='store_true')
+parser.add_argument('--trainer', action='store_true')
+parser.add_argument('--worker', action='store_true')
+parser.add_argument('--test', action='store_true')
+parser.add_argument('--benchmark', action='store_true')
+parser.add_argument('--expert', action='store_true')
+parser.add_argument('--wandb', action='store_true')
+parser.add_argument('--profile', action='store_true')
 
-# Set trainer mode
 sys.argv = ['tmrl', '--trainer']
 args = parser.parse_args()
 
-# Call TMRL main with parsed args
+print("[TRAINER] Starting TMRL main...")
 tmrl_main_module.main(args)

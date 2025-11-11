@@ -1,26 +1,24 @@
-FROM alpine:latest
+FROM python:3.10-alpine
 
-WORKDIR /shared-data
+WORKDIR /app
 
-# Install basic tools
-RUN apk add --no-cache \
-    bash \
-    coreutils
+# Install Python packages needed for analysis
+RUN pip install --no-cache-dir numpy
 
 # Create data directory structure
 RUN mkdir -p /shared-data/episodes \
              /shared-data/states \
              /shared-data/actions \
-             /shared-data/metrics
+             /shared-data/metrics \
+             /shared-data/transitions \
+             /shared-data/db_store \
+             /shared-data/db_to_trainer
 
-# Create health check script
-RUN echo '#!/bin/bash' > /health-check.sh && \
-    echo 'echo "Database container healthy"' >> /health-check.sh && \
-    echo 'echo "Storage directories:"' >> /health-check.sh && \
-    echo 'ls -lh /shared-data' >> /health-check.sh && \
-    chmod +x /health-check.sh
+# Copy database analyzer script
+COPY db_main.py /app/
 
+# Volume mount point
 VOLUME ["/shared-data"]
 
-# Keep container running
-CMD ["tail", "-f", "/dev/null"]
+# Run database analyzer
+CMD ["python", "-u", "/app/db_main.py"]
