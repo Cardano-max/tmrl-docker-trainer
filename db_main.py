@@ -1,6 +1,7 @@
 """
 Database Main - Analyzes transitions and sends config to trainer
 Real bidirectional communication for knowledge graph research
+FIXED: Properly detects and processes new transitions
 """
 import os
 import json
@@ -38,15 +39,20 @@ def process_new_transitions(processed):
             return 0, processed
         
         files = sorted(os.listdir(TRANSITIONS_DIR))
-        new_files = [f for f in files if f.endswith(".json") and f not in processed]
         
-        if not new_files:
-            return 0, processed
-        
-        count = 0
+        # Process new files only
+        new_count = 0
         with open(KG_FILE, "a") as kg_out:
-            for fname in new_files:
+            for fname in files:
+                if not fname.endswith(".json"):
+                    continue
+                
+                # Skip if already processed
+                if fname in processed:
+                    continue
+                
                 path = os.path.join(TRANSITIONS_DIR, fname)
+                
                 try:
                     with open(path, "r") as f:
                         trans = json.load(f)
@@ -61,21 +67,23 @@ def process_new_transitions(processed):
                         "action_brake": trans.get("action", {}).get("brake"),
                         "action_steering": trans.get("action", {}).get("steering"),
                         "reward": trans.get("reward"),
+                        "adjusted_reward": trans.get("adjusted_reward"),
                         "next_state_speed": trans.get("next_state", {}).get("speed"),
                         "done": trans.get("done", False)
                     }
                     
                     kg_out.write(json.dumps(edge) + "\n")
                     processed.add(fname)
-                    count += 1
+                    new_count += 1
                     
                 except Exception as e:
                     print(f"[DB] Error processing {fname}: {e}")
         
         save_processed(processed)
-        if count > 0:
-            print(f"[DB] ✓ Appended {count} transitions to KG store")
-        return count, processed
+        if new_count > 0:
+            print(f"[DB] ✓ Appended {new_count} NEW transitions to KG store")
+            print(f"[DB]   Total processed: {len(processed)} files")
+        return new_count, processed
         
     except Exception as e:
         print(f"[DB] Error in process_new_transitions: {e}")
@@ -156,7 +164,7 @@ def analyze_and_update_config():
             },
             "metadata": {
                 "generated_by": "database_analyzer",
-                "version": "1.0"
+                "version": "1.1_fixed"
             }
         }
         
@@ -183,7 +191,10 @@ def main_loop():
     print("="*60)
     
     processed = load_processed()
+    print(f"[DB] Loaded {len(processed)} previously processed files")
+    
     cycle = 0
+    last_count = len(processed)
     
     while True:
         try:
@@ -195,11 +206,15 @@ def main_loop():
             # Update config if we processed new data
             if count > 0:
                 analyze_and_update_config()
+                last_count = len(processed)
             
-            # Status update every 10 cycles
+            # Status update every 10 cycles (50 seconds)
             if cycle % 10 == 0:
-                total = len(processed)
-                print(f"[DB] Status: {total} transitions processed total")
+                if len(processed) > last_count:
+                    print(f"[DB] Status: {len(processed)} transitions processed (+{len(processed) - last_count} since last update)")
+                    last_count = len(processed)
+                else:
+                    print(f"[DB] Status: {len(processed)} transitions processed total (no new files)")
             
             time.sleep(5)
             

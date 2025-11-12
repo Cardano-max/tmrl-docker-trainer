@@ -1,6 +1,7 @@
 """
 TMRL Enhanced Trainer with Database Feedback
 Real bidirectional communication for knowledge graph research
+FIXED: Resumes transition numbering from existing files
 """
 import os
 import json
@@ -17,7 +18,40 @@ class TransitionLogger:
     
     def __init__(self, base_path):
         self.base_path = base_path
-        self.logged_count = 0
+        
+        # FIX: Check existing files and continue numbering
+        transitions_dir = f"{base_path}/transitions"
+        os.makedirs(transitions_dir, exist_ok=True)
+        
+        # Find highest existing transition ID
+        existing_files = []
+        if os.path.exists(transitions_dir):
+            try:
+                existing_files = [f for f in os.listdir(transitions_dir) 
+                                if f.startswith('transition_') and f.endswith('.json')]
+            except:
+                pass
+        
+        if existing_files:
+            # Extract numbers from filenames
+            ids = []
+            for f in existing_files:
+                try:
+                    # transition_00012345.json -> 12345
+                    num = int(f.split('_')[1].split('.')[0])
+                    ids.append(num)
+                except:
+                    continue
+            
+            if ids:
+                self.logged_count = max(ids)
+                print(f"[DATABASE] ✓ Resuming from transition {self.logged_count} (found {len(existing_files)} existing files)")
+            else:
+                self.logged_count = 0
+        else:
+            self.logged_count = 0
+            print(f"[DATABASE] Starting fresh - no existing transitions found")
+        
         self.last_memory_size = None
         self.initialized = False
         
@@ -26,7 +60,6 @@ class TransitionLogger:
         self.config_path = os.path.join(base_path, "db_to_trainer", "config.json")
         self.last_config_check = 0
         
-        os.makedirs(f"{base_path}/transitions", exist_ok=True)
         os.makedirs(f"{base_path}/metrics", exist_ok=True)
         
         print("[DATABASE] Transition Logger initialized with feedback system")
@@ -226,7 +259,7 @@ with open(f"{DATABASE_PATH}/status.json", 'w') as f:
     json.dump({
         'status': 'production_with_feedback',
         'timestamp': datetime.now().isoformat(),
-        'version': '2.0'
+        'version': '2.1_fixed_numbering'
     }, f, indent=2)
 
 # Patch TMRL
