@@ -1,63 +1,68 @@
 version: '3.8'
 
 services:
-  # Container 1: Server
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: falkordb
+    ports:
+      - "6379:6379"
+      - "3000:3000"
+    networks:
+      - tmrl-network
+    volumes:
+      - falkordb_data:/var/lib/falkordb/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   tmrl-server:
     build:
       context: .
       dockerfile: Dockerfile.server
     container_name: tmrl_server
-    hostname: tmrl-server
-    networks:
-      - tmrl-network
     ports:
       - "6666:6666"
       - "6667:6667"
-    environment:
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
+    networks:
+      - tmrl-network
+    depends_on:
+      falkordb:
+        condition: service_healthy
 
-  # Container 2: Trainer
   tmrl-trainer:
     build:
       context: .
       dockerfile: Dockerfile.trainer
     container_name: tmrl_trainer
-    hostname: tmrl-trainer
+    networks:
+      - tmrl-network
     depends_on:
       - tmrl-server
-      - tmrl-database
-    networks:
-      - tmrl-network
-    ports:
-      - "6668:6668"
-    environment:
-      - PYTHONUNBUFFERED=1
-      - DATABASE_PATH=/shared-data
+      - falkordb
     volumes:
-      - ./weights:/root/TmrlData/weights
       - ./checkpoints:/root/TmrlData/checkpoints
-      - ./logs:/root/TmrlData/logs
-      - training-data:/shared-data
-    restart: unless-stopped
+      - ./weights:/root/TmrlData/weights
+    command: python3 train_with_mpc_direct.py
 
-  # Container 3: Database (File Storage)
-  tmrl-database:
+  mpc-processor:
     build:
       context: .
-      dockerfile: Dockerfile.database
-    container_name: tmrl_database
-    hostname: tmrl-database
+      dockerfile: Dockerfile.trainer
+    container_name: mpc_processor
     networks:
       - tmrl-network
+    depends_on:
+      - falkordb
     volumes:
-      - training-data:/shared-data
-    restart: unless-stopped
+      - ./checkpoints:/root/TmrlData/checkpoints:ro
+      - ./weights:/root/TmrlData/weights:ro
+    command: tail -f /dev/null
 
 networks:
   tmrl-network:
     driver: bridge
 
 volumes:
-  training-data:
-    driver: local
+  falkordb_data:

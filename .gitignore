@@ -4,34 +4,39 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
+*.egg-info/
+
+# Virtual Environment
 venv/
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Docker
-.dockerignore
-
-# Training data (too large for git)
-weights/
-checkpoints/
-logs/
-*.pt
-*.pth
-*.ckpt
-
-# OS
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
+ENV/
+env/
 
 # IDE
 .vscode/
 .idea/
-*.sublime-*
+*.swp
+*.swo
 
-# Temporary files
-*.tmp
+# Project specific
+archive/
+checkpoints/
+logs/
+weights/
+*.tcpt
+*.pth
+
+# Docker
 *.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+data/
+*.pkl
+*.pickle
+
+# Local configs
+server_config.json
+trainer_config.json

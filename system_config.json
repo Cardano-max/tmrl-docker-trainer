@@ -1,0 +1,174 @@
+{
+  "system_name": "TMRL_Knowledge_Graph_System",
+  "version": "3.0.0",
+  "description": "Production system with prediction validation, dual timestamps, and constraint-based planning",
+  
+  "actions": {
+    "gas": {
+      "type": "continuous",
+      "description": "Acceleration pedal position",
+      "range": [0.0, 1.0],
+      "unit": "normalized",
+      "bins": [
+        {"min": 0.0, "max": 0.1, "label": "NONE"},
+        {"min": 0.1, "max": 0.4, "label": "LOW"},
+        {"min": 0.4, "max": 0.7, "label": "MED"},
+        {"min": 0.7, "max": 1.1, "label": "HIGH"}
+      ]
+    },
+    "brake": {
+      "type": "continuous",
+      "description": "Brake pedal position",
+      "range": [0.0, 1.0],
+      "unit": "normalized",
+      "bins": [
+        {"min": 0.0, "max": 0.1, "label": "NONE"},
+        {"min": 0.1, "max": 0.4, "label": "LOW"},
+        {"min": 0.4, "max": 0.7, "label": "MED"},
+        {"min": 0.7, "max": 1.1, "label": "HIGH"}
+      ]
+    },
+    "steering": {
+      "type": "continuous",
+      "description": "Steering wheel position",
+      "range": [-1.0, 1.0],
+      "unit": "normalized",
+      "bins": [
+        {"min": -1.1, "max": -0.66, "label": "LEFT_FULL"},
+        {"min": -0.66, "max": -0.33, "label": "LEFT_MED"},
+        {"min": -0.33, "max": -0.1, "label": "LEFT_SMALL"},
+        {"min": -0.1, "max": 0.1, "label": "STRAIGHT"},
+        {"min": 0.1, "max": 0.33, "label": "RIGHT_SMALL"},
+        {"min": 0.33, "max": 0.66, "label": "RIGHT_MED"},
+        {"min": 0.66, "max": 1.1, "label": "RIGHT_FULL"}
+      ]
+    }
+  },
+  
+  "feedbacks": {
+    "speed": {
+      "description": "Vehicle velocity magnitude",
+      "unit": "km/h",
+      "interval_size": 0.5,
+      "expected_range": [0.0, 50.0],
+      "constraint_type": "soft",
+      "critical": true,
+      "aggregation": "mean"
+    },
+    "lidar_0": {
+      "description": "LIDAR beam 0 - Forward center distance sensor",
+      "unit": "arbitrary_units",
+      "interval_size": 5.0,
+      "expected_range": [0.0, 500.0],
+      "constraint_type": "hard",
+      "critical": false,
+      "aggregation": "min"
+    },
+    "lidar_1": {
+      "description": "LIDAR beam 1 - Forward left distance sensor",
+      "unit": "arbitrary_units",
+      "interval_size": 5.0,
+      "expected_range": [0.0, 500.0],
+      "constraint_type": "hard",
+      "critical": false,
+      "aggregation": "min"
+    },
+    "lidar_2": {
+      "description": "LIDAR beam 2 - Forward right distance sensor",
+      "unit": "arbitrary_units",
+      "interval_size": 5.0,
+      "expected_range": [0.0, 500.0],
+      "constraint_type": "hard",
+      "critical": false,
+      "aggregation": "min"
+    }
+  },
+  
+  "checkpoints": {
+    "enabled": true,
+    "checkpoint_path": "/root/TmrlData/checkpoints",
+    "auto_discover": true,
+    "specific_files": [],
+    "max_checkpoints": 10,
+    "checkpoint_frequency": 1000,
+    "validation": {
+      "required": true,
+      "check_format": true,
+      "verify_memory": true
+    }
+  },
+  
+  "system_config": {
+    "database_host": "falkordb",
+    "database_port": 6379,
+    "checkpoint_path": "/root/TmrlData/checkpoints",
+    "processing_batch_size": 100,
+    "max_episode_length": 10000,
+    "enable_caching": true,
+    "cache_size": 10000,
+    "log_level": "INFO",
+    "performance_monitoring": true,
+    "retry_attempts": 3,
+    "retry_delay": 1.0
+  },
+  
+  "intelligence_config": {
+    "repeat_episode": {
+      "enabled": true,
+      "frame_tolerance": 100,
+      "state_matching_threshold": 0.95,
+      "enable_prediction_validation": true
+    },
+    "exploration": {
+      "enabled": true,
+      "prioritize_untried": true,
+      "random_fallback": true
+    },
+    "range_monitor": {
+      "enabled": true,
+      "alert_threshold": 10,
+      "severe_multiplier": 2.0,
+      "auto_suggest_ranges": true
+    },
+    "sensorial": {
+      "enabled": true,
+      "tolerance": 0.01,
+      "log_all_predictions": false,
+      "log_failures_only": true
+    },
+    "future_constraints": {
+      "enabled": true,
+      "default_constraints": []
+    }
+  },
+  
+  "memory_config": {
+    "short_term_capacity": 10,
+    "action_memory_size": 1000,
+    "state_history_size": 1000,
+    "enable_compression": false
+  },
+  
+  "simulation_config": {
+    "simulation_mode": true,
+    "allow_constraint_violations": true,
+    "enforce_hard_constraints": false,
+    "description": "In simulation: learn from violations. In real_world: enforce hard constraints."
+  },
+  
+  "timestamp_config": {
+    "use_dual_timestamps": true,
+    "record_agent_timestamp": true,
+    "record_environment_frame": true,
+    "record_episode_timestamps": true
+  },
+  
+  "monitoring": {
+    "log_graph_stats_interval": 1000,
+    "log_performance_interval": 100,
+    "enable_profiling": false,
+    "range_monitoring": true,
+    "prediction_monitoring": true,
+    "constraint_monitoring": true
+  }
+}

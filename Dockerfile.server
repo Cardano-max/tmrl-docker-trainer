@@ -60,7 +60,7 @@ RUN pip install --no-cache-dir --no-deps tmrl==0.7.1
 # Create directories
 RUN mkdir -p /root/TmrlData/config
 
-# Copy server config
+# Copy server config to CORRECT location
 COPY server_config.json /root/TmrlData/config/config.json
 
 # Expose ports

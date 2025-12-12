@@ -2,60 +2,48 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies
+# Install system dependencies INCLUDING OpenGL libraries for OpenCV
 RUN apt-get update && apt-get install -y \
     git \
-    wget \
-    netcat-openbsd \
-    iputils-ping \
     build-essential \
+    libgl1 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch CPU
+# Install Python packages
 RUN pip install --no-cache-dir \
-    torch==2.0.1 \
-    torchvision==0.15.2 \
-    --index-url https://download.pytorch.org/whl/cpu
+    tmrl \
+    falkordb \
+    numpy \
+    scipy \
+    torch \
+    pandas
 
-# Install TMRL dependencies
-RUN pip install --no-cache-dir \
-    "numpy<2.0" \
-    pandas \
-    pyyaml \
-    packaging \
-    requests \
-    gymnasium \
-    opencv-python-headless \
-    pyinstrument \
-    Pillow \
-    matplotlib \
-    rtgym \
-    mss \
-    pyautogui \
-    pynput \
-    psutil
+# Copy all training files
+COPY train_with_mpc_direct.py /app/
+COPY train_with_falkordb.py /app/
+COPY falkordb_manager.py /app/
+COPY exploration_system.py /app/
+COPY path_tracker.py /app/
+COPY interval_goals.py /app/
+COPY knowledge_graph_planner.py /app/
+COPY mpc_optimizer.py /app/
+COPY safety_supervisor.py /app/
+COPY test_mpc_system.py /app/
+COPY mpc_memory_processor.py /app/
 
-# Install networking
-RUN pip install --no-cache-dir tlspyo>=0.2.5
+# 🔥 ADD THE NEW FILES HERE (THIS IS WHAT YOU WERE MISSING)
+COPY exploration_module.py /app/
+COPY mpc_memory_processor_v2.py /app/
+COPY test_exploration_live.py /app/
+# 🔥 END OF NEW FILES
 
-# Install TMRL
-RUN pip install --no-cache-dir --no-deps tmrl==0.7.1
-
-# Create directories
-RUN mkdir -p /root/TmrlData/config \
-             /root/TmrlData/weights \
-             /root/TmrlData/checkpoints \
-             /root/TmrlData/logs \
-             /shared-data
-
-# Copy trainer config
+# Create config directory and copy config
+RUN mkdir -p /root/TmrlData/config
 COPY trainer_config.json /root/TmrlData/config/config.json
 
-# Copy custom training script
-COPY train_with_logging.py /app/train_with_logging.py
+# Set Python path
+ENV PYTHONPATH=/app:$PYTHONPATH
 
-EXPOSE 6668
-
-CMD ["python", "-u", "/app/train_with_logging.py"]
+# Default: run MPC direct trainer
+CMD ["python3", "train_with_mpc_direct.py"]
