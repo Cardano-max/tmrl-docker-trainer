@@ -1,0 +1,69 @@
+body {
+  margin: 0;
+  background: #0b1020;
+  color: #e5e7eb;
+  font-family: system-ui;
+}
+
+.app-header {
+  padding: 16px;
+  background: linear-gradient(90deg,#020617,#020617);
+}
+
+.explorer {
+  display: flex;
+  height: calc(100vh - 80px);
+}
+
+.columns {
+  display: flex;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.column {
+  min-width: 260px;
+  border-right: 1px solid #1f2937;
+  padding: 12px;
+}
+
+.column h3 {
+  color: #38bdf8;
+}
+
+.column li {
+  cursor: pointer;
+  padding: 6px;
+}
+
+.column li:hover {
+  background: #1e293b;
+}
+
+.details {
+  width: 380px;
+  padding: 12px;
+  border-left: 1px solid #1f2937;
+  overflow: auto;
+}
+
+.breadcrumbs {
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: #7dd3fc;
+  cursor: pointer;
+}
+
+.breadcrumbs span:hover {
+  text-decoration: underline;
+}
+
+.jump {
+  margin: 10px 0;
+}
+
+.jump a {
+  color: #4ade80;
+  font-weight: bold;
+  text-decoration: none;
+}
