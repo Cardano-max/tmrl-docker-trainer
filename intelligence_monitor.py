@@ -1,268 +1,321 @@
 """
-INTELLIGENCE: Range Monitoring
+INTELLIGENCE: Range Monitor
 
-Third intelligence module - monitors if actual values are outside expected ranges
-This is NOT validation, it's ongoing monitoring
+Monitors feedback values and alerts when outside expected ranges
 
-EXAMPLE:
-- Expected: distance between robots > 0.5m
-- Actual: robots at 0.3m
-- Intelligence alerts: "Robots getting under expected range"
+SUPERVISOR'S FRAMEWORK:
+"Monitor - alert when values outside expected ranges"
 
-This intelligence continuously monitors and alerts administrators
+KEY FEATURES:
+1. Per-feedback range checking
+2. Configurable alert thresholds
+3. History tracking
+4. Environment-agnostic
 """
 
 import logging
+import time
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from collections import defaultdict
-import time
+
+from exceptions import IntelligenceError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class RangeViolation:
-    """Record of a range violation"""
+class RangeAlert:
+    """Alert when value goes outside expected range"""
     feedback_name: str
+    value: float
     expected_min: float
     expected_max: float
-    actual_value: float
+    deviation: float
+    severity: str  # 'warning', 'critical'
     timestamp: float
-    frame: int
-    severity: str  # 'minor', 'moderate', 'severe'
     
-    def __str__(self):
-        return (
-            f"⚠️ {self.feedback_name}: "
-            f"expected [{self.expected_min}, {self.expected_max}], "
-            f"got {self.actual_value} @ frame {self.frame}"
-        )
+    def __repr__(self) -> str:
+        return (f"RangeAlert({self.feedback_name}={self.value:.2f}, "
+                f"expected=[{self.expected_min:.2f}, {self.expected_max:.2f}], "
+                f"severity={self.severity})")
 
 
 class RangeMonitorIntelligence:
     """
-    Intelligence that monitors feedback ranges
+    Monitors feedback values for range violations
     
-    INTELLIGENCE DECISION:
-    - Compare actual feedback values with expected ranges
-    - Alert when values outside expected ranges
-    - Track violation patterns
-    - Suggest range adjustments
+    SUPERVISOR'S CONCEPT:
+    "Monitor - system should know when things are outside normal"
     
-    This is INTELLIGENCE, not validation:
-    - Validation happens at config loading (brain capacity)
-    - Monitoring happens during operation (intelligence)
+    This is INTELLIGENCE - using knowledge about expected ranges
+    to detect anomalies.
     """
     
-    def __init__(self, feedbacks_config: Dict[str, Any]):
+    # Severity levels
+    SEVERITY_WARNING = 'warning'
+    SEVERITY_CRITICAL = 'critical'
+    
+    def __init__(self, 
+                 feedbacks_config: Dict[str, Any],
+                 alert_threshold: int = 10):
         """
         Initialize range monitor
         
         Args:
-            feedbacks_config: Feedbacks section from config
+            feedbacks_config: Feedback configuration from system config
+            alert_threshold: Number of alerts before escalation
         """
-        self.config = feedbacks_config
+        self.feedbacks_config = feedbacks_config
+        self.alert_threshold = alert_threshold
         
         # Extract expected ranges
-        self.expected_ranges = {}
+        self.expected_ranges: Dict[str, tuple] = {}
         for name, config in feedbacks_config.items():
-            self.expected_ranges[name] = {
-                'min': config['expected_range'][0],
-                'max': config['expected_range'][1],
-                'unit': config['unit']
-            }
+            self.expected_ranges[name] = (
+                config['expected_range'][0],
+                config['expected_range'][1]
+            )
         
-        # Violation tracking
-        self.violations: List[RangeViolation] = []
-        self.violation_counts = defaultdict(int)
-        self.last_violation_time = {}
+        # Alert tracking
+        self.alerts: List[RangeAlert] = []
+        self.max_alerts = 1000
         
-        # Alert thresholds
-        self.alert_threshold = 10  # Alert after N violations
-        self.severe_threshold_multiplier = 2.0  # 2x outside range = severe
-        
-        # Statistics
+        # Per-feedback statistics
+        self.violation_counts: Dict[str, int] = defaultdict(int)
         self.checks_performed = 0
-        self.alerts_generated = 0
         
         logger.info("[INTELLIGENCE:MONITOR] Range Monitor initialized")
     
-    def check_ranges(self, 
-                     feedbacks: Dict[str, float],
-                     frame: int) -> List[RangeViolation]:
+    def check_feedbacks(self, 
+                       feedbacks: Dict[str, float]) -> List[RangeAlert]:
         """
-        CORE INTELLIGENCE DECISION: Check if values are in expected ranges
+        Check all feedbacks for range violations
         
         Args:
             feedbacks: Current feedback values
-            frame: Current frame number
         
         Returns:
-            List of violations found
+            List of alerts for any violations
         """
         self.checks_performed += 1
-        violations = []
+        new_alerts = []
         
         for name, value in feedbacks.items():
             if name not in self.expected_ranges:
                 continue
             
-            expected = self.expected_ranges[name]
-            expected_min = expected['min']
-            expected_max = expected['max']
+            expected_min, expected_max = self.expected_ranges[name]
             
-            # Check if outside range
             if value < expected_min or value > expected_max:
-                # Calculate severity
-                range_size = expected_max - expected_min
-                
+                # Calculate deviation
                 if value < expected_min:
                     deviation = expected_min - value
                 else:
                     deviation = value - expected_max
                 
                 # Determine severity
-                if deviation > range_size * self.severe_threshold_multiplier:
-                    severity = 'severe'
-                elif deviation > range_size:
-                    severity = 'moderate'
-                else:
-                    severity = 'minor'
+                range_size = expected_max - expected_min
+                deviation_percent = (deviation / range_size) * 100 if range_size > 0 else 100
                 
-                # Create violation record
-                violation = RangeViolation(
+                severity = (
+                    self.SEVERITY_CRITICAL if deviation_percent > 50 
+                    else self.SEVERITY_WARNING
+                )
+                
+                alert = RangeAlert(
                     feedback_name=name,
+                    value=value,
                     expected_min=expected_min,
                     expected_max=expected_max,
-                    actual_value=value,
-                    timestamp=time.time(),
-                    frame=frame,
-                    severity=severity
+                    deviation=deviation,
+                    severity=severity,
+                    timestamp=time.time()
                 )
                 
-                violations.append(violation)
-                self.violations.append(violation)
+                new_alerts.append(alert)
                 self.violation_counts[name] += 1
-                self.last_violation_time[name] = time.time()
                 
-                # Log based on severity
-                if severity == 'severe':
-                    logger.error(f"[MONITOR] SEVERE: {violation}")
-                elif severity == 'moderate':
-                    logger.warning(f"[MONITOR] MODERATE: {violation}")
-                else:
-                    logger.info(f"[MONITOR] MINOR: {violation}")
+                # Log alert
+                log_level = logging.WARNING if severity == self.SEVERITY_WARNING else logging.ERROR
+                logger.log(log_level, f"[MONITOR] {alert}")
         
-        # Generate alerts if threshold exceeded
-        if violations:
-            self._check_alert_thresholds()
+        # Store alerts
+        self.alerts.extend(new_alerts)
+        if len(self.alerts) > self.max_alerts:
+            self.alerts = self.alerts[-self.max_alerts:]
         
-        return violations
+        return new_alerts
     
-    def _check_alert_thresholds(self):
-        """Check if any feedback has exceeded alert threshold"""
-        for name, count in self.violation_counts.items():
-            if count >= self.alert_threshold and count % self.alert_threshold == 0:
-                self.alerts_generated += 1
-                logger.error(
-                    f"[MONITOR] 🚨 ALERT: '{name}' has {count} violations! "
-                    f"Consider adjusting expected range or system constraints."
-                )
-    
-    def get_violation_summary(self, 
-                             feedback_name: Optional[str] = None) -> Dict[str, Any]:
+    def check_single(self, 
+                    feedback_name: str, 
+                    value: float) -> Optional[RangeAlert]:
         """
-        Get summary of violations
+        Check single feedback value
         
         Args:
-            feedback_name: Specific feedback to summarize (None = all)
+            feedback_name: Name of feedback
+            value: Current value
         
         Returns:
-            Violation summary
+            Alert if violation, None otherwise
         """
-        if feedback_name:
-            violations = [v for v in self.violations if v.feedback_name == feedback_name]
-        else:
-            violations = self.violations
-        
-        if not violations:
-            return {
-                'total_violations': 0,
-                'feedbacks_affected': [],
-                'severity_breakdown': {}
-            }
-        
-        # Calculate statistics
-        severity_counts = defaultdict(int)
-        for v in violations:
-            severity_counts[v.severity] += 1
-        
-        feedbacks_affected = list(set(v.feedback_name for v in violations))
+        alerts = self.check_feedbacks({feedback_name: value})
+        return alerts[0] if alerts else None
+    
+    def get_violation_summary(self) -> Dict[str, Any]:
+        """Get summary of all violations"""
+        recent_alerts = self.alerts[-100:]
         
         return {
-            'total_violations': len(violations),
-            'feedbacks_affected': feedbacks_affected,
-            'severity_breakdown': dict(severity_counts),
-            'most_violated': max(self.violation_counts.items(), key=lambda x: x[1])[0] if self.violation_counts else None,
-            'recent_violations': [str(v) for v in violations[-5:]]
+            'total_checks': self.checks_performed,
+            'total_violations': sum(self.violation_counts.values()),
+            'violations_by_feedback': dict(self.violation_counts),
+            'recent_alerts': len(recent_alerts),
+            'warning_count': sum(1 for a in recent_alerts if a.severity == self.SEVERITY_WARNING),
+            'critical_count': sum(1 for a in recent_alerts if a.severity == self.SEVERITY_CRITICAL)
         }
     
-    def suggest_range_adjustment(self, 
-                                 feedback_name: str) -> Optional[Dict[str, float]]:
+    def is_value_in_range(self, 
+                         feedback_name: str, 
+                         value: float) -> bool:
         """
-        Suggest new range based on observed violations
+        Quick check if value is in expected range
         
         Args:
-            feedback_name: Feedback to analyze
+            feedback_name: Name of feedback
+            value: Value to check
         
         Returns:
-            Suggested range or None
+            True if in range
         """
-        feedback_violations = [v for v in self.violations if v.feedback_name == feedback_name]
+        if feedback_name not in self.expected_ranges:
+            return True  # Unknown feedback - assume OK
         
-        if not feedback_violations:
-            return None
+        expected_min, expected_max = self.expected_ranges[feedback_name]
+        return expected_min <= value <= expected_max
+    
+    def get_expected_range(self, feedback_name: str) -> Optional[tuple]:
+        """Get expected range for feedback"""
+        return self.expected_ranges.get(feedback_name)
+    
+    def get_recent_alerts(self, 
+                         count: int = 10,
+                         feedback_name: Optional[str] = None) -> List[RangeAlert]:
+        """
+        Get recent alerts
         
-        # Calculate observed range from violations
-        actual_values = [v.actual_value for v in feedback_violations]
-        observed_min = min(actual_values)
-        observed_max = max(actual_values)
+        Args:
+            count: Number of alerts to return
+            feedback_name: Filter by specific feedback
         
-        # Add 10% buffer
-        range_buffer = (observed_max - observed_min) * 0.1
+        Returns:
+            List of recent alerts
+        """
+        alerts = self.alerts
         
-        suggested = {
-            'min': observed_min - range_buffer,
-            'max': observed_max + range_buffer,
-            'reason': f'Based on {len(feedback_violations)} violations',
-            'current_min': self.expected_ranges[feedback_name]['min'],
-            'current_max': self.expected_ranges[feedback_name]['max']
-        }
+        if feedback_name:
+            alerts = [a for a in alerts if a.feedback_name == feedback_name]
         
-        logger.info(
-            f"[MONITOR] Suggestion for '{feedback_name}': "
-            f"Change range from [{suggested['current_min']}, {suggested['current_max']}] "
-            f"to [{suggested['min']:.2f}, {suggested['max']:.2f}]"
-        )
-        
-        return suggested
+        return alerts[-count:]
+    
+    def clear_alerts(self):
+        """Clear all stored alerts"""
+        self.alerts.clear()
+        self.violation_counts.clear()
+        logger.info("[MONITOR] Alerts cleared")
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get monitoring statistics"""
+        """Get monitor statistics"""
         return {
             'checks_performed': self.checks_performed,
-            'total_violations': len(self.violations),
-            'alerts_generated': self.alerts_generated,
-            'feedbacks_monitored': len(self.expected_ranges),
+            'total_alerts': len(self.alerts),
             'violation_counts': dict(self.violation_counts),
-            'recent_violations': [str(v) for v in self.violations[-10:]]
+            'expected_ranges': self.expected_ranges,
+            'alert_threshold': self.alert_threshold,
+            **self.get_violation_summary()
         }
+
+
+class AdaptiveRangeMonitor(RangeMonitorIntelligence):
+    """
+    Enhanced monitor that adapts ranges based on observations
     
-    def reset_violations(self):
-        """Clear violation history"""
-        self.violations.clear()
-        self.violation_counts.clear()
-        self.last_violation_time.clear()
-        logger.info("[INTELLIGENCE:MONITOR] Violations reset")
+    SUPERVISOR'S CONCEPT:
+    "Learning - update internal model based on experience"
+    
+    This monitor can expand expected ranges when consistent
+    out-of-range values are observed.
+    """
+    
+    def __init__(self, 
+                 feedbacks_config: Dict[str, Any],
+                 alert_threshold: int = 10,
+                 adaptation_rate: float = 0.01):
+        super().__init__(feedbacks_config, alert_threshold)
+        
+        self.adaptation_rate = adaptation_rate
+        
+        # Track observed ranges
+        self.observed_mins: Dict[str, float] = {}
+        self.observed_maxs: Dict[str, float] = {}
+        
+        for name in feedbacks_config:
+            self.observed_mins[name] = float('inf')
+            self.observed_maxs[name] = float('-inf')
+        
+        logger.info("[MONITOR:ADAPTIVE] Adaptive Range Monitor initialized")
+    
+    def check_feedbacks(self, 
+                       feedbacks: Dict[str, float]) -> List[RangeAlert]:
+        """Check feedbacks and update observed ranges"""
+        # Update observed ranges
+        for name, value in feedbacks.items():
+            if name in self.observed_mins:
+                self.observed_mins[name] = min(self.observed_mins[name], value)
+                self.observed_maxs[name] = max(self.observed_maxs[name], value)
+        
+        # Standard check
+        return super().check_feedbacks(feedbacks)
+    
+    def get_observed_ranges(self) -> Dict[str, tuple]:
+        """Get observed value ranges"""
+        ranges = {}
+        for name in self.observed_mins:
+            if self.observed_mins[name] != float('inf'):
+                ranges[name] = (
+                    self.observed_mins[name],
+                    self.observed_maxs[name]
+                )
+        return ranges
+    
+    def adapt_ranges(self):
+        """
+        Adapt expected ranges based on observations
+        
+        Expands ranges slightly if consistent out-of-range observations
+        """
+        for name, (expected_min, expected_max) in self.expected_ranges.items():
+            observed_min = self.observed_mins.get(name, expected_min)
+            observed_max = self.observed_maxs.get(name, expected_max)
+            
+            # Expand if observed is outside expected
+            new_min = expected_min
+            new_max = expected_max
+            
+            if observed_min < expected_min:
+                # Gradually expand minimum
+                new_min = expected_min - (expected_min - observed_min) * self.adaptation_rate
+            
+            if observed_max > expected_max:
+                # Gradually expand maximum
+                new_max = expected_max + (observed_max - expected_max) * self.adaptation_rate
+            
+            if new_min != expected_min or new_max != expected_max:
+                self.expected_ranges[name] = (new_min, new_max)
+                logger.info(
+                    f"[ADAPTIVE] Range adapted for {name}: "
+                    f"[{expected_min:.2f}, {expected_max:.2f}] -> "
+                    f"[{new_min:.2f}, {new_max:.2f}]"
+                )

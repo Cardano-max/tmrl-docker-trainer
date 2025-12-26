@@ -1,13 +1,41 @@
 """
 Input Validators
 Ensures all inputs are valid before processing
+
+Updated: Added numpy type support for TMRL compatibility
 """
 
 import logging
 from typing import Dict, Any, List
 from exceptions import ValidationError
 
+# Try to import numpy for type checking
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
 logger = logging.getLogger(__name__)
+
+
+def is_numeric(value) -> bool:
+    """
+    Check if value is numeric (int, float, or numpy numeric types)
+    
+    This handles:
+    - Python int, float
+    - numpy.int32, numpy.int64
+    - numpy.float32, numpy.float64
+    """
+    if isinstance(value, (int, float)):
+        return True
+    
+    if HAS_NUMPY:
+        if isinstance(value, (np.integer, np.floating)):
+            return True
+    
+    return False
 
 
 class ConfigValidator:
@@ -136,12 +164,14 @@ class InputValidator:
                 raise ValidationError(f"Missing feedback: {key}")
             
             value = feedbacks[key]
-            if not isinstance(value, (int, float)):
+            if not is_numeric(value):
                 raise ValidationError(
                     f"Feedback '{key}' must be numeric, got {type(value)}"
                 )
             
-            if not (-1e10 < value < 1e10):  # Sanity check
+            # Convert to Python float for range check
+            float_val = float(value)
+            if not (-1e10 < float_val < 1e10):  # Sanity check
                 raise ValidationError(
                     f"Feedback '{key}' value out of range: {value}"
                 )
@@ -169,7 +199,7 @@ class InputValidator:
                 raise ValidationError(f"Missing action: {key}")
             
             value = action[key]
-            if not isinstance(value, (int, float)):
+            if not is_numeric(value):
                 raise ValidationError(
                     f"Action '{key}' must be numeric, got {type(value)}"
                 )
@@ -179,10 +209,11 @@ class InputValidator:
     @staticmethod
     def validate_frame_number(frame: int) -> bool:
         """Validate frame number"""
-        if not isinstance(frame, int):
+        # Allow numpy integers as well
+        if not is_numeric(frame):
             raise ValidationError(f"Frame must be int, got {type(frame)}")
         
-        if frame < 0:
+        if int(frame) < 0:
             raise ValidationError(f"Frame cannot be negative: {frame}")
         
         return True

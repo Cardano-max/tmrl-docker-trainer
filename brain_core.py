@@ -1,24 +1,37 @@
 """
-BRAIN CAPACITY V2 - With State Management & Generic Queries
+BRAIN CAPACITY V3 - With Disjoint Action Filtering
 
-CRITICAL UPDATES:
-1. Generic query functions (not hardcoded gas/brake/steering)
-2. Integration with StateManager for "What Am I?" 
-3. State-aware operations
-4. Returns action combinations from config, not specific actions
+SUPERVISOR'S FRAMEWORK:
+- Brain Capacity = What system CAN do
+- NOT intelligence, just raw capabilities
+
+CRITICAL UPDATES (v3):
+1. Disjoint action filtering (from latest meeting)
+2. Generic query functions (not hardcoded gas/brake/steering)
+3. Integration with StateManager for "What Am I?"
+4. State-aware operations
+5. Returns valid action combinations only
+
+DISJOINT ACTIONS (Supervisor's requirement):
+- Actions that cannot occur simultaneously
+- Example: brake disjoint accelerate, left disjoint right
+- These are filtered from combination generation
 """
 
 import json
 import logging
 import math
 import time
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Set
 from pathlib import Path
 from itertools import product
 from functools import lru_cache
 from falkordb import FalkorDB
 
-from exceptions import *
+from exceptions import (
+    ConfigurationError, BrainCapacityError, DiscretizationError,
+    GraphOperationError, DatabaseConnectionError, ValidationError
+)
 from validators import ConfigValidator, InputValidator
 from state_manager import StateManager, StateVector
 
@@ -29,8 +42,93 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class DisjointActionValidator:
+    """
+    Validates and filters disjoint action combinations
+    
+    SUPERVISOR'S ONTOLOGY CONCEPT:
+    "Disjoint is an expression from ontology - it means having no elements in common"
+    "If action is disjoint, isolate from combinations"
+    
+    Example:
+    - brake disjoint accelerate → cannot both be active (non-NONE)
+    - left disjoint right → cannot steer both directions
+    """
+    
+    def __init__(self, actions_config: Dict[str, Any]):
+        """Initialize disjoint validator from config"""
+        self.actions_config = actions_config
+        self.disjoint_pairs: Set[Tuple[str, str]] = set()
+        
+        # Extract disjoint declarations from each action
+        for action_name, action_config in actions_config.items():
+            disjoint_list = action_config.get('disjoint', [])
+            for disjoint_action in disjoint_list:
+                if disjoint_action in actions_config:
+                    # Store as sorted tuple to avoid duplicates
+                    pair = tuple(sorted([action_name, disjoint_action]))
+                    self.disjoint_pairs.add(pair)
+        
+        logger.info(f"[BRAIN] Disjoint pairs loaded: {self.disjoint_pairs}")
+    
+    def is_valid_combination(self, combination: Dict[str, str]) -> bool:
+        """
+        Check if action combination is valid (no disjoint violations)
+        
+        SUPERVISOR'S RULE:
+        "Every time they're all for all the positions that have brake 
+        and accelerate in the same combination, this is eliminated"
+        
+        Args:
+            combination: Dict of {action_name: action_label}
+        
+        Returns:
+            True if valid (no disjoint violations)
+        """
+        for action1, action2 in self.disjoint_pairs:
+            label1 = combination.get(action1, 'NONE')
+            label2 = combination.get(action2, 'NONE')
+            
+            # Both actions are active (non-NONE) = disjoint violation
+            # SUPERVISOR: "Or you're breaking or you're accelerating"
+            if label1 != 'NONE' and label2 != 'NONE':
+                return False
+        
+        return True
+    
+    def filter_combinations(self, 
+                           all_combinations: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """
+        Filter out invalid combinations based on disjoint rules
+        
+        Args:
+            all_combinations: All possible combinations
+        
+        Returns:
+            Valid combinations only
+        """
+        valid = [c for c in all_combinations if self.is_valid_combination(c)]
+        
+        filtered_count = len(all_combinations) - len(valid)
+        logger.info(
+            f"[BRAIN] Disjoint filter: {filtered_count} invalid combinations removed, "
+            f"{len(valid)} valid combinations remain"
+        )
+        
+        return valid
+    
+    def get_disjoint_pairs(self) -> List[Tuple[str, str]]:
+        """Get list of disjoint action pairs"""
+        return list(self.disjoint_pairs)
+
+
 class ActionDiscretizer:
-    """Discretizes continuous actions to bins with caching"""
+    """
+    Discretizes continuous actions to bins with caching
+    
+    SUPERVISOR'S NOTE:
+    "Actions are CAPACITY - what system CAN do"
+    """
     
     def __init__(self, actions_config: Dict[str, Any]):
         """Initialize from validated configuration"""
@@ -38,8 +136,16 @@ class ActionDiscretizer:
             self.config = actions_config
             self.action_names = sorted(list(actions_config.keys()))
             
-            # Pre-compute all combinations
-            self.all_combinations = self._generate_all_combinations()
+            # Initialize disjoint validator
+            self.disjoint_validator = DisjointActionValidator(actions_config)
+            
+            # Pre-compute all combinations (including invalid)
+            self._all_raw_combinations = self._generate_all_combinations()
+            
+            # Filter to valid combinations only
+            self.all_combinations = self.disjoint_validator.filter_combinations(
+                self._all_raw_combinations
+            )
             
             # Create lookup maps for fast discretization
             self._bin_lookup = self._create_bin_lookup()
@@ -47,7 +153,8 @@ class ActionDiscretizer:
             logger.info(
                 f"[BRAIN] Action Discretizer initialized: "
                 f"{len(self.action_names)} actions, "
-                f"{len(self.all_combinations)} combinations"
+                f"{len(self.all_combinations)} valid combinations "
+                f"(filtered from {len(self._all_raw_combinations)} raw)"
             )
             
         except Exception as e:
@@ -63,7 +170,7 @@ class ActionDiscretizer:
         return lookup
     
     def _generate_all_combinations(self) -> List[Dict[str, str]]:
-        """Generate all possible action combinations"""
+        """Generate all possible action combinations (before disjoint filtering)"""
         try:
             action_labels = {}
             for action_name in self.action_names:
@@ -116,9 +223,17 @@ class ActionDiscretizer:
         except Exception as e:
             raise DiscretizationError(f"Discretization failed: {e}")
     
+    def is_valid_action(self, discrete_actions: Dict[str, str]) -> bool:
+        """Check if action combination is valid (respects disjoint rules)"""
+        return self.disjoint_validator.is_valid_combination(discrete_actions)
+    
     def get_max_combinations(self) -> int:
-        """Get total number of possible action combinations"""
+        """Get total number of valid action combinations"""
         return len(self.all_combinations)
+    
+    def get_raw_combinations_count(self) -> int:
+        """Get total number of raw combinations (before filtering)"""
+        return len(self._all_raw_combinations)
     
     def get_combination_index(self, discrete_actions: Dict[str, str]) -> int:
         """Get index of action combination"""
@@ -130,10 +245,34 @@ class ActionDiscretizer:
     def get_action_names(self) -> List[str]:
         """Get list of action names (generic)"""
         return self.action_names.copy()
+    
+    def get_disjoint_pairs(self) -> List[Tuple[str, str]]:
+        """Get list of disjoint action pairs"""
+        return self.disjoint_validator.get_disjoint_pairs()
+    
+    def get_untried_actions(self, 
+                           tried_combinations: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """
+        Get valid actions not yet tried
+        
+        SUPERVISOR: "Exploration - try untried actions from current state"
+        """
+        tried_set = {tuple(sorted(c.items())) for c in tried_combinations}
+        untried = [
+            c for c in self.all_combinations 
+            if tuple(sorted(c.items())) not in tried_set
+        ]
+        return untried
 
 
 class FeedbackDiscretizer:
-    """Discretizes continuous feedback to intervals with caching"""
+    """
+    Discretizes continuous feedback to intervals with caching
+    
+    SUPERVISOR'S NOTE:
+    "Feedback is CAPACITY - what sensors receive"
+    "Intervals not exact values - discrete bins for continuous feedback"
+    """
     
     def __init__(self, feedbacks_config: Dict[str, Any]):
         """Initialize from validated configuration"""
@@ -207,7 +346,13 @@ class FeedbackDiscretizer:
 
 
 class KnowledgeGraph:
-    """Single knowledge graph for one feedback type"""
+    """
+    Single knowledge graph for one feedback type
+    
+    SUPERVISOR'S FRAMEWORK:
+    "Knowledge Graphs: One graph per feedback dimension"
+    "Stores state transitions and actions taken"
+    """
     
     def __init__(self, 
                  feedback_name: str,
@@ -306,7 +451,7 @@ class KnowledgeGraph:
             result = self._execute_with_retry(_create)
             if result:
                 self.stats['nodes_created'] += 1
-                logger.info(
+                logger.debug(
                     f"[{self.feedback_name}] NEW NODE: {interval_value} @ frame {frame}"
                 )
             return result
@@ -417,6 +562,45 @@ class KnowledgeGraph:
         except GraphOperationError:
             return 0
     
+    def get_tried_action_labels(self, state_value: float) -> List[str]:
+        """Get distinct action labels tried from this state"""
+        def _get_labels():
+            result = self.graph.query(f"""
+                MATCH (s:State {{value: {state_value}}})-[a]->()
+                RETURN DISTINCT a.action_label
+            """)
+            return result
+        
+        try:
+            result = self._execute_with_retry(_get_labels)
+            return [row[0] for row in result.result_set] if result.result_set else []
+        except GraphOperationError:
+            return []
+    
+    def query_transition(self,
+                        from_value: float,
+                        action_label: str) -> Optional[float]:
+        """
+        Query knowledge: "From state X, with action Y, where do I go?"
+        
+        SUPERVISOR: "Knowledge tells me: if I press brake, this happens"
+        """
+        def _query():
+            result = self.graph.query(f"""
+                MATCH (from:State {{value: {from_value}}})-[:{action_label}]->(to:State)
+                RETURN to.value
+                LIMIT 1
+            """)
+            return result
+        
+        try:
+            result = self._execute_with_retry(_query)
+            if result.result_set:
+                return result.result_set[0][0]
+            return None
+        except GraphOperationError:
+            return None
+    
     def get_statistics(self) -> Dict[str, int]:
         """Get graph statistics"""
         def _get_stats():
@@ -440,24 +624,30 @@ class KnowledgeGraph:
 
 class BrainArchitecture:
     """
-    Complete Brain Capacity System V2
+    Complete Brain Capacity System V3
     
-    NEW FEATURES:
-    1. State management integration
-    2. Generic query functions
-    3. "What Am I?" awareness
+    SUPERVISOR'S FRAMEWORK:
+    "Brain Capacity = What system CAN do (NOT intelligence)"
+    "To see is capacity. What you do with what you see is intelligence."
+    
+    FEATURES:
+    1. Disjoint action filtering (from latest meeting)
+    2. State management integration
+    3. Generic query functions
+    4. "What Am I?" awareness
     """
     
     def __init__(self, config_path: str):
         """Initialize complete brain architecture"""
         logger.info("="*80)
-        logger.info("INITIALIZING BRAIN CAPACITY V2")
+        logger.info("INITIALIZING BRAIN CAPACITY V3")
         logger.info("="*80)
         
         try:
             self.config = self._load_config(config_path)
             ConfigValidator.validate_config(self.config)
             
+            # Action discretizer with disjoint filtering
             self.action_discretizer = ActionDiscretizer(self.config['actions'])
             self.feedback_discretizer = FeedbackDiscretizer(self.config['feedbacks'])
             
@@ -466,7 +656,7 @@ class BrainArchitecture:
             self.graphs: Dict[str, KnowledgeGraph] = {}
             self._create_all_graphs()
             
-            # NEW: State manager integration
+            # State manager integration
             graph_names = list(self.graphs.keys())
             self.state_manager = StateManager(graph_names)
             
@@ -476,10 +666,15 @@ class BrainArchitecture:
                 'errors': 0
             }
             
+            # Log disjoint info
+            disjoint_pairs = self.action_discretizer.get_disjoint_pairs()
+            
             logger.info(f"✓ System: {self.config['system_name']}")
             logger.info(f"✓ Actions: {len(self.config['actions'])}")
             logger.info(f"✓ Feedbacks: {len(self.config['feedbacks'])}")
-            logger.info(f"✓ Action combinations: {self.action_discretizer.get_max_combinations()}")
+            logger.info(f"✓ Disjoint pairs: {disjoint_pairs}")
+            logger.info(f"✓ Raw combinations: {self.action_discretizer.get_raw_combinations_count()}")
+            logger.info(f"✓ Valid combinations: {self.action_discretizer.get_max_combinations()}")
             logger.info(f"✓ Knowledge graphs: {len(self.graphs)}")
             logger.info(f"✓ State manager: initialized")
             logger.info("="*80)
@@ -571,10 +766,16 @@ class BrainArchitecture:
             )
             
             action_discrete = self.action_discretizer.discretize(action_continuous)
+            
+            # Validate action is valid (respects disjoint rules)
+            if not self.action_discretizer.is_valid_action(action_discrete):
+                logger.warning(f"[BRAIN] Invalid action (disjoint violation): {action_discrete}")
+                # Still record for learning, but flag it
+            
             prev_intervals = self.feedback_discretizer.discretize_all(prev_feedbacks)
             curr_intervals = self.feedback_discretizer.discretize_all(curr_feedbacks)
             
-            # Update state manager (NEW)
+            # Update state manager
             self.state_manager.update_state(curr_intervals, frame)
             
             # Record to each graph
@@ -605,10 +806,9 @@ class BrainArchitecture:
         """
         CRITICAL: "What Am I?" function
         
-        Returns complete awareness of current state across ALL graphs
+        SUPERVISOR: "System knows where it is across all graphs"
         
-        Returns:
-            Complete state awareness dictionary
+        Returns complete awareness of current state across ALL graphs
         """
         return self.state_manager.what_am_i()
     
@@ -661,8 +861,12 @@ class BrainArchitecture:
             logger.warning(f"Failed to get action from episode: {e}")
             return None
     
+    def get_valid_combinations(self) -> List[Dict[str, str]]:
+        """Get all valid action combinations (disjoint-filtered)"""
+        return self.action_discretizer.all_combinations.copy()
+    
     def get_max_action_combinations(self) -> int:
-        """Return max possible action combinations"""
+        """Return max possible valid action combinations"""
         return self.action_discretizer.get_max_combinations()
     
     def get_tried_actions_count(self, feedbacks: Dict[str, float]) -> int:
@@ -682,6 +886,36 @@ class BrainArchitecture:
             logger.warning(f"Failed to count tried actions: {e}")
             return 0
     
+    def get_untried_actions(self, feedbacks: Dict[str, float]) -> List[Dict[str, str]]:
+        """
+        Get valid actions not yet tried from this state
+        
+        SUPERVISOR: "Exploration - try untried actions"
+        """
+        try:
+            intervals = self.query_current_state(feedbacks)
+            first_feedback = list(intervals.keys())[0]
+            
+            if first_feedback not in self.graphs:
+                return self.get_valid_combinations()
+            
+            graph = self.graphs[first_feedback]
+            tried_labels = graph.get_tried_action_labels(intervals[first_feedback])
+            
+            # Filter out tried from valid combinations
+            untried = []
+            for combo in self.action_discretizer.all_combinations:
+                action_parts = [f"{k}_{v}" for k, v in sorted(combo.items())]
+                action_label = "__".join(action_parts)
+                if action_label not in tried_labels:
+                    untried.append(combo)
+            
+            return untried
+            
+        except Exception as e:
+            logger.warning(f"Failed to get untried actions: {e}")
+            return self.get_valid_combinations()
+    
     def get_system_statistics(self) -> Dict[str, Any]:
         """Get comprehensive system statistics"""
         stats = {
@@ -690,11 +924,13 @@ class BrainArchitecture:
                 'version': self.config.get('version', 'unknown'),
                 'actions': len(self.config['actions']),
                 'feedbacks': len(self.config['feedbacks']),
-                'action_combinations': self.action_discretizer.get_max_combinations(),
+                'disjoint_pairs': self.action_discretizer.get_disjoint_pairs(),
+                'raw_combinations': self.action_discretizer.get_raw_combinations_count(),
+                'valid_combinations': self.action_discretizer.get_max_combinations(),
                 **self.system_stats
             },
             'graphs': {},
-            'state': self.state_manager.get_statistics()
+            'state_manager': self.state_manager.get_statistics()
         }
         
         for name, graph in self.graphs.items():

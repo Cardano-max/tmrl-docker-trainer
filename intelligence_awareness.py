@@ -9,13 +9,19 @@ SUPERVISOR'S CORRECTION:
 AWARENESS = Type of intelligence that compares:
 - Internal model (what knowledge predicts)
 - External feedback (what sensors observe)
+
+KEY FEATURES:
+1. Prediction from knowledge graphs
+2. Reality comparison with configurable tolerance
+3. Awareness codes for different mismatch levels
+4. Statistics and history tracking
 """
 
 import logging
+import time
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
 from collections import defaultdict
-import time
 
 from state_manager import StateVector
 
@@ -28,7 +34,7 @@ class AwarenessResult:
     """
     Result of awareness check (knowledge vs reality)
     
-    Supervisor's Example:
+    SUPERVISOR'S EXAMPLE:
     "Motor turned twice (what I did)
      Position didn't change - on ice (what happened)
      Awareness detects: prediction was wrong"
@@ -110,7 +116,7 @@ class AwarenessIntelligence:
         """
         Predict future state using knowledge (internal model)
         
-        Supervisor: "Knowledge tells me: if I press brake, this happens"
+        SUPERVISOR: "Knowledge tells me: if I press brake, this happens"
         
         Args:
             current_state: Where we are (awareness)
@@ -152,7 +158,7 @@ class AwarenessIntelligence:
         """
         Query knowledge graph for prediction
         
-        Supervisor: "Knowledge is what I think will happen"
+        SUPERVISOR: "Knowledge is what I think will happen"
         """
         if graph_name not in brain.graphs:
             return None
@@ -186,7 +192,7 @@ class AwarenessIntelligence:
         
         Compare internal model (knowledge) vs external reality (feedback)
         
-        Supervisor's Example:
+        SUPERVISOR'S EXAMPLE:
         "You press brake (action from knowledge)
          Your ear hears you talk, but I don't hear (feedback)
          Your awareness: 'Phone died!' (detected mismatch)"
@@ -265,7 +271,7 @@ class AwarenessIntelligence:
         """
         Get percentage of times knowledge matched reality
         
-        Supervisor: "How often is my internal model correct?"
+        SUPERVISOR: "How often is my internal model correct?"
         """
         if self.awareness_checks_performed == 0:
             return 0.0
@@ -275,7 +281,7 @@ class AwarenessIntelligence:
         """
         Update internal model when awareness detects mismatch
         
-        Supervisor: "I update my internal model through your feedback"
+        SUPERVISOR: "I update my internal model through your feedback"
         
         This is where learning happens - when awareness says
         "My prediction was wrong, update knowledge"
@@ -288,6 +294,10 @@ class AwarenessIntelligence:
                 f"reality was {result.actual_state.to_vector()}"
             )
             # Actual update mechanism would go here
+    
+    def get_recent_awareness_checks(self, count: int = 10) -> list:
+        """Get recent awareness check results"""
+        return self.awareness_history[-count:]
     
     def get_statistics(self) -> Dict[str, Any]:
         """Get awareness intelligence statistics"""
@@ -308,3 +318,14 @@ class AwarenessIntelligence:
             },
             'recent_checks': [str(a) for a in self.awareness_history[-5:]]
         }
+    
+    def reset_statistics(self):
+        """Reset all statistics"""
+        self.awareness_checks_performed = 0
+        self.knowledge_matched_reality = 0
+        self.knowledge_deviated_minor = 0
+        self.knowledge_deviated_major = 0
+        self.knowledge_completely_wrong = 0
+        self.deviations_by_feedback.clear()
+        self.awareness_history.clear()
+        logger.info("[AWARENESS] Statistics reset")

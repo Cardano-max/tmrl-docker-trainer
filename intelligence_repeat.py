@@ -1,6 +1,8 @@
 """
 INTELLIGENCE: Repeat Episode V3 (Enhanced with Prediction Validation)
 
+UPDATED: Uses AwarenessIntelligence instead of deprecated SensorialIntelligence
+
 FIRST TASK:
 "1. Agent performs random actions (record everything)
  2. Next episode: Repeat EXACT sequence from knowledge graphs
@@ -8,16 +10,42 @@ FIRST TASK:
 
 KEY CONCEPT:
 "After first episode, each state has ONE action to next state"
+
+SUPERVISOR'S FRAMEWORK:
+- Awareness = "knowledge vs reality" comparison
+- Uses predict_from_knowledge, not predict_future_state
+- Uses check_awareness, not validate_prediction
 """
 
 import logging
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
+from dataclasses import dataclass
 
 from state_manager import StateVector
-from intelligence_sensorial import SensorialIntelligence, PredictionResult
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PredictionResult:
+    """
+    Result of comparing knowledge prediction vs reality
+    
+    SUPERVISOR: "Awareness detects: prediction was wrong"
+    """
+    predicted_state: StateVector
+    actual_state: StateVector
+    validation_code: int  # 0 = match, 1+ = mismatch
+    deviations: Dict[str, float]  # How wrong we were
+    
+    def is_correct(self) -> bool:
+        """Return True if prediction matched reality"""
+        return self.validation_code == 0
+    
+    def __str__(self) -> str:
+        status = "CORRECT" if self.is_correct() else f"MISMATCH (code={self.validation_code})"
+        return f"PredictionResult({status}, deviations={self.deviations})"
 
 
 class RepeatEpisodeIntelligence:
@@ -29,23 +57,29 @@ class RepeatEpisodeIntelligence:
      Perform action → Validate: predicted == actual?"
     
     ENHANCED WITH:
-    - Prediction before action
-    - Validation after action
+    - Prediction before action (using awareness)
+    - Validation after action (awareness check)
     - Return codes (0 = match, 1+ = mismatch)
+    
+    UPDATED:
+    - Uses AwarenessIntelligence instead of deprecated SensorialIntelligence
+    - predict_from_knowledge instead of predict_future_state
+    - check_awareness instead of validate_prediction
     """
     
-    def __init__(self, brain, knowledge, sensorial: SensorialIntelligence):
+    def __init__(self, brain, knowledge, awareness):
         """
         Initialize repeat intelligence with prediction validation
         
         Args:
             brain: Brain capacity
             knowledge: Knowledge manager
-            sensorial: Sensorial intelligence for validation
+            awareness: Awareness intelligence for prediction/validation
+                       (UPDATED: was 'sensorial')
         """
         self.brain = brain
         self.knowledge = knowledge
-        self.sensorial = sensorial
+        self.awareness = awareness  # UPDATED: was self.sensorial
         
         # Episode tracking
         self.episode_number = 0
@@ -63,14 +97,14 @@ class RepeatEpisodeIntelligence:
     
     def decide_action(self,
                      current_feedbacks: Dict[str, float],
-                     current_frame: int) -> Optional[tuple[Dict[str, str], StateVector]]:
+                     current_frame: int) -> Optional[Tuple[Dict[str, str], StateVector]]:
         """
         Decide action with prediction
         
         PROCESS:
         1. Check where am I (current state)
         2. Query graph: what action exists here?
-        3. Predict: where will I go?
+        3. Predict: where will I go? (using awareness)
         4. Return action AND prediction
         
         Args:
@@ -120,8 +154,8 @@ class RepeatEpisodeIntelligence:
         # Remove frame from action dict
         action_discrete = {k: v for k, v in action_discrete.items() if k != 'frame'}
         
-        # 3. Predict where we'll go
-        predicted_state = self.sensorial.predict_future_state(
+        # 3. Predict where we'll go (UPDATED: use awareness.predict_from_knowledge)
+        predicted_state = self.awareness.predict_from_knowledge(
             current_state, action_discrete, self.brain
         )
         
@@ -141,7 +175,7 @@ class RepeatEpisodeIntelligence:
         """
         Validate action result (prediction vs reality)
         
-        VALIDATION:
+        VALIDATION (using Awareness):
         "If prediction matches reality → return 0
          If different → return 1+ and log"
         
@@ -160,8 +194,17 @@ class RepeatEpisodeIntelligence:
             frame=predicted_state.frame
         )
         
-        # Validate prediction
-        result = self.sensorial.validate_prediction(predicted_state, actual_state)
+        # Validate prediction using awareness (UPDATED: use check_awareness)
+        awareness_result = self.awareness.check_awareness(
+            predicted_state, actual_state
+        )
+        
+        result = PredictionResult(
+            predicted_state=predicted_state,
+            actual_state=actual_state,
+            validation_code=awareness_result.awareness_code,
+            deviations=awareness_result.deviations
+        )
         
         # Track failures
         if result.validation_code > 0:
@@ -191,28 +234,31 @@ class RepeatEpisodeIntelligence:
             f"(length: {self.episode_length})"
         )
     
-    def get_repeat_rate(self) -> float:
-        """Get percentage of actions successfully repeated"""
-        if self.decisions_made == 0:
-            return 0.0
-        return (self.actions_repeated / self.decisions_made) * 100.0
-    
-    def get_prediction_success_rate(self) -> float:
-        """Get percentage of predictions that matched reality"""
-        if self.actions_repeated == 0:
-            return 0.0
-        successful = self.actions_repeated - self.actions_failed_prediction
-        return (successful / self.actions_repeated) * 100.0
-    
     def get_statistics(self) -> Dict[str, Any]:
-        """Get comprehensive repeat intelligence statistics"""
+        """Get repeat intelligence statistics"""
+        prediction_accuracy = 0.0
+        if self.actions_repeated > 0:
+            successful = self.actions_repeated - self.actions_failed_prediction
+            prediction_accuracy = successful / self.actions_repeated * 100
+        
         return {
             'episode_number': self.episode_number,
             'episode_length': self.episode_length,
             'decisions_made': self.decisions_made,
             'actions_repeated': self.actions_repeated,
             'actions_failed_prediction': self.actions_failed_prediction,
-            'repeat_rate': self.get_repeat_rate(),
-            'prediction_success_rate': self.get_prediction_success_rate(),
+            'prediction_accuracy': prediction_accuracy,
             'recent_failures': [str(f) for f in self.prediction_failures[-5:]]
         }
+    
+    def reset(self):
+        """Reset for new run"""
+        self.episode_number = 0
+        self.episode_start_frame = 0
+        self.episode_end_frame = 0
+        self.episode_length = 0
+        self.decisions_made = 0
+        self.actions_repeated = 0
+        self.actions_failed_prediction = 0
+        self.prediction_failures = []
+        logger.info("[REPEAT_V3] Reset")
