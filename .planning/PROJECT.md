@@ -1,125 +1,167 @@
-# TMRL Intelligent System (Dr. Sutton Collaboration)
+# Intelligent Agent Architecture: MPC-RL Hybrid System
 
 ## What This Is
 
-A **frame-based intelligent learning system** for the TrackMania Racing League (TMRL) that learns action-feedback relationships through structured experimentation. The system discovers the minimum/maximum bounds (bins) of controllable actions, records learned transitions in knowledge graphs (FalkorDB), and orchestrates goal-driven behavior using internal state awareness and constraint satisfaction.
+A modular, environment-agnostic intelligent agent system that combines Model Predictive Control and Reinforcement Learning to enable autonomous agents (robots, autonomous vehicles, etc.) to learn from experience while respecting hard safety constraints. Unlike traditional RL that relies on reward signals, this system uses goal-based planning with dynamic constraint intervals, learning what actions affect which state variables, and building multi-layered hierarchical intelligence through knowledge graphs.
 
-**Key distinction:** This separates **Brain Capacity** (what the system CAN do—sensors, actions, timing) from **Intelligence** (how the system USES capacity to make decisions based on knowledge graphs).
+**Current Milestone**: Core Research Implementation (Foundation Layer)
+**Target Environments**: TrackMania (current), drones, autonomous vehicles, robotic systems, healthcare systems
 
 ## Core Value
 
-**The system must reliably discover and exploit the minimum/maximum action bounds (bins) for each controllable action, then use this knowledge to build a queryable knowledge graph of state transitions that enables goal-driven planning.**
+**Enable safe, goal-based autonomous learning that scales hierarchically** — The system must be able to learn optimal action sequences within constrained intervals rather than through trial-and-error reward seeking, making it applicable to life-critical domains where failure is not an option.
 
-If bins aren't discovered correctly, the entire intelligence layer collapses. This is table stakes.
+## Architecture Vision (from Dr. Sutton meetings)
 
-## Architecture Principles (Invariants)
+### Three Fundamental Layers
 
-### 1. Three-Layer Separation
-- **Brain Capacity**: Actions, feedbacks, time management, frame rate, discretization
-- **Knowledge**: Knowledge graphs (FalkorDB), state-transition history, bins
-- **Intelligence**: Awareness, goal orchestration, planning, constraint satisfaction
+1. **Brain Capacity** — The foundational processing architecture
+   - Configuration-driven initialization (JSON/YAML, environment-agnostic)
+   - State tracking: current state, previous state, full history
+   - Action discretization: continuous → discrete bins with constraints
+   - Knowledge graph generation: one graph per state variable
+   - State-action relationship recording: explicit edges with discrete action labels
+   - Query system: retrieve state nodes, find attempted/untried actions
 
-### 2. Three States
-- **Internal State**: What the system thinks (from knowledge graphs)
-- **Environment State**: Ground truth (from environment feedback)
-- **Sensorial State**: Raw sensor values (motor positions, temperatures)
+2. **Knowledge** — Data acquired through brain capacity
+   - Populated knowledge graphs with state nodes as intervals
+   - Action relationships (edges) labeled with specific action names and bins
+   - State transitions recorded with timestamps (system and environment)
+   - Memory of all previous episodes and trajectories
+   - Independent variable graphs linked through multi-variable goals
 
-### 3. Frame-Based Timing
-- All intelligence operates on **frame** granularity, not wall-clock time
-- One action per frame during training
-- Internal timestamp manager (not environment clock)
-- Frame rate discovered/validated from environment, not hardcoded
+3. **Intelligence** — How the system uses knowledge
+   - **Exploration Intelligence**: Try untested action combinations at each state node
+   - **Planning Intelligence**: Find optimal path through graph to reach goal states
+   - **Repetition Intelligence**: Replay successful trajectories from previous episodes
+   - **Hierarchical Intelligence**: Compose smaller goals into larger goals (per Dr. Sutton's vacuum robot analogy)
+   - **Constraint Validation**: Verify sequences stay within hard/soft constraint intervals
 
-### 4. Knowledge vs Capacity
-- **Prior Knowledge**: Actions/feedbacks from config file
-- **Acquired Knowledge**: Bins and knowledge graphs from experimentation
-- Bins MUST be discovered; user CANNOT hardcode them
+### Key Conceptual Breakthroughs
+
+**From Meeting 2 & 3: Goal-Based Constraints vs Reward Functions**
+- Traditional RL: Model learns to maximize rewards (can cheat/exploit)
+- Our System: Model operates within constrained intervals (cannot violate rules)
+- Human analogy: Don't learn from falling off a cliff; learn the cliff boundary first
+
+**From Meeting 4: Data Input vs Data Knowledge**
+- **Data Input**: Raw sensor values (LIDAR distances, position coordinates)
+- **Data Knowledge**: Derived information (speed = Δposition/Δtime, acceleration = Δspeed/Δtime)
+- System learns which inputs are independent, derives knowledge from them
+- Reduces graph explosion while maintaining full expressiveness
+
+**From Meeting 3-4: Modular Intelligence = Search Algorithm**
+- Brain capacity creates state space graph
+- Exploration = depth-first search for untested actions per node
+- No reward function needed for exploration phase
+- Reward/goals come later as constraint intervals
+
+**From Meetings 4-5: Hierarchical Multi-Variable Control**
+- Each state variable gets separate graph (position, velocity, acceleration, distance-to-obstacle, traffic-light-state)
+- Actions affect different subsets of graphs
+- High-level goals = combinations of intervals on multiple graphs
+- System can plan complex sequences respecting all constraints simultaneously
 
 ## Requirements
 
-### Validated (Existing in Codebase)
-- ✓ Basic TrackMania environment connection
-- ✓ Config file structure (actions, feedbacks)
-- ✓ Frame-based control loop
-- ✓ Some knowledge graph infrastructure
+### Validated
 
-### Active (Must Implement / Fix)
+(None yet — building to validate)
 
-#### 1. **Capacity Layer**
-- [ ] **Frame Rate Discovery**: Determine FPS from environment, not hardcoded
-- [ ] **Action Binding**: Send actions to environment via generic protocol
-- [ ] **Feedback Reception**: Receive feedback values with frame alignment
-- [ ] **Disjoint Action Filtering**: Eliminate impossible action combinations
-- [ ] **Bin Discovery Algorithm**: Binary search for min/max per action
-- [ ] **Discretization**: Convert continuous feedback into state bins
+### Active (Core Implementations Needed)
 
-#### 2. **Knowledge Layer**
-- [ ] **FalkorDB Integration**: Stable graph database for long-term memory
-- [ ] **Knowledge Graph Recording**: Record state transitions at frame rate
-- [ ] **Node Deduplication**: No duplicate nodes; reuse state nodes
-- [ ] **Query Interface**: "From state X with action Y, where do I end up?"
-- [ ] **Replay Capability**: "Show episode 4337 again"
-- [ ] **Memory Persistence**: Load/save knowledge graphs across sessions
+**PHASE 1: Brain Capacity Foundation**
+- [ ] Configuration System (JSON-based, env-agnostic)
+- [ ] State Variable Manager (tracks current/previous/history)
+- [ ] Action Discretizer (continuous→discrete with bins & constraints)
+- [ ] Knowledge Graph Infrastructure (per-variable graph storage & querying)
+- [ ] State-Action Recording (populate graphs with transitions)
 
-#### 3. **Intelligence Layer**
-- [ ] **Awareness Intelligence**: Compare internal state (from graph) vs environment state
-- [ ] **Goal Orchestration**: Execute multi-frame plans to reach constrained states
-- [ ] **Constraint Validation**: Hard constraints (cannot violate), soft constraints (report)
-- [ ] **Failure Detection**: Recognize when system is stuck (no progress)
-- [ ] **Episode Control**: System owns episode length (not environment)
+**PHASE 2: Knowledge Base Layer**
+- [ ] Multi-Graph Coordination (handle independent variables)
+- [ ] State Node Creation (interval-based discretization)
+- [ ] Edge Labeling (explicit action names from config)
+- [ ] Transition Memory (episode-based trajectory storage)
+- [ ] Query Optimization (fast state lookup in intervals)
 
-#### 4. **Validation System**
-- [ ] **Config Validation**: Verify config matches environment
-- [ ] **Awareness Validation**: Internal state matches environment feedback
-- [ ] **Constraint Validation**: Feedbacks within expected ranges
+**PHASE 3: Exploration Intelligence**
+- [ ] Untried Action Discovery (find actions not yet performed at node)
+- [ ] Combination Generation (handle n-ary action combinations)
+- [ ] Exploration Heuristics (decide which untried action to try)
+- [ ] Episode Loop Integration (episode start/end handling)
 
-#### 5. **Communication Protocol**
-- [ ] **Generic Message Format**: Send/receive independent of TrackMania specifics
-- [ ] **Port-Based Routing**: Environment listens on defined port
-- [ ] **Bidirectional Handshake**: Verify both directions before proceeding
+**PHASE 4: Planning Intelligence**
+- [ ] Pathfinding in Multi-Graph (traverse graphs respecting constraints)
+- [ ] Goal Definition Interface (specify desired intervals)
+- [ ] Goal-to-Path Translation (convert goals to action sequences)
+- [ ] Constraint Validation (verify paths satisfy hard/soft constraints)
 
-### Out of Scope (Explicitly Excluded)
+**PHASE 5: Hierarchical Intelligence**
+- [ ] Goal Composition (combine simple goals into complex goals)
+- [ ] Dynamic Timestamping (adjust frequency based on distance-to-goal)
+- [ ] Multi-Level Planning (decompose goal hierarchically)
+- [ ] Inter-Level Communication (how level N influences level N+1)
 
-- **MPC (Model Predictive Control)**: Deferred to future phase; focus on 3-state architecture first
-- **Reward/Policy Learning**: System uses goals and constraints, not rewards
-- **Blind Exploration**: Exploration MUST be goal-based, never random
-- **User-Defined Bins**: Users cannot guess; system must discover
-- **Environment-Specific Code in Core**: All TrackMania specifics isolated
-- **State Coverage Completion**: "All reachable states" is infinite; not a termination criterion
+**PHASE 6: Safety & Production Hardening**
+- [ ] Hard/Soft Constraint Differentiation (stop vs update bounds)
+- [ ] Simulation vs Real-World Modes (learning constraints differ)
+- [ ] Graceful Degradation (behavior when no path found)
+- [ ] Performance Optimization (scale to 100+ variables)
+
+**PHASE 7: Integration & Deployment**
+- [ ] End-to-End System Testing
+- [ ] Multi-Environment Validation (TrackMania → Drone → Robot)
+- [ ] Production Monitoring & Logging
+- [ ] Documentation & Formalization (ready for publication)
+
+### Out of Scope
+
+- GPU acceleration (CPU-first implementation)
+- Real-time neural network training during execution (graphs are data structures, not learned models)
+- Reward shaping or traditional RL loss functions
+- Communication between independent agents (single-agent focus for now)
+- Mobile/edge deployment (research first, deployment later)
 
 ## Context
 
-### From Meetings with Dr. Richard Sutton
-- **Motivation**: Building an intelligent system that can learn action-feedback relationships in a continuous control environment
-- **Problem Solved**: Current implementations mix capacity and intelligence, making it impossible to debug or scale
-- **Key Insight**: "Whatever God gave you is brain capacity. What you do with it is intelligence."
-- **Research Phase**: This is fundamentally a **research project**, not production engineering—bugs reveal missing concepts
+**Research Lineage**: Dr. Richard Sutton (RL pioneer) has identified a fundamental limitation in traditional RL — agents learn through failure, which is unacceptable in safety-critical domains. This research implements Sutton's vision of goal-based, constraint-respecting learning using knowledge graphs to isolate state variables.
 
-### Technical Debts / Known Issues
-- Frame rate hardcoded (not discovered from environment)
-- Bin discovery algorithm buggy or missing
-- Knowledge graph node duplication occurring
-- Timestamp management confuses internal vs external time
-- Communication protocol TrackMania-specific instead of generic
-- Disjoint action filtering not implemented
+**Prior Art Reviewed**: Model Predictive Control (for planning), Markov Decision Processes (for state representation), reinforcement learning (for adaptability), knowledge graphs (for structure).
+
+**Current Codebase State** (from mapping):
+- Basic reinforcement learning framework exists (trainer, worker, server architecture)
+- Docker infrastructure established
+- Some state tracking implemented
+- Action handling partially complete
+- FalkorDB graph database options explored
+
+**Key Challenges Identified**:
+- Isolating independent state variables (not all variables should be separate graphs)
+- Handling continuous values without infinite node explosion (discretization strategy)
+- Maintaining expressiveness while keeping graphs queryable
+- Scaling to 100+ state variables and 1000+ action combinations
+- Real-world deployment where "episode zero" is not reset
 
 ## Constraints
 
-- **Tech Stack**: Python, FalkorDB (Redis-compatible), TrackMania environment
-- **Frame Rate**: Environment-driven (not hardcoded); currently ~70 FPS
-- **Development Approach**: Capacity-first (validate basics before intelligence layers)
-- **Research Constraint**: All decisions must be explainable to Dr. Sutton; guessing not acceptable
+- **Architecture**: Modular, environment-agnostic (config-driven, not hardcoded)
+- **Type Safety**: Must support any sensor type and action space
+- **Performance**: Query response <100ms for graph operations
+- **Scalability**: Handle 100+ independent state variables, 1000+ action combinations
+- **Safety**: Hard constraints must never be violated; graceful failure on path-not-found
+- **Generality**: Same codebase runs on TrackMania, drones, robots, healthcare systems with only config changes
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| FalkorDB for knowledge graphs | Redis-compatible, queryable, persistent | — Pending validation |
-| Binary search for bin discovery | O(log N) convergence, mathematically sound | ✓ Conceptually correct, implementation buggy |
-| Frame-based not time-based | Aligns with environment granularity, simplifies synchronization | — Needs validation against real environment |
-| Generic protocol for communication | Enable different environments (not TrackMania-only) | — Partially implemented |
-| Internal timestamp manager | Decouples system timing from environment timing | — Needs stress testing |
+| Knowledge graphs over neural networks | Interpretable, queryable, no training instability | Decision locked: Use FalkorDB or graph library |
+| Separate graphs per state variable | Reveals action dependencies, reduces coupling | Decision locked: Must derive knowledge where possible |
+| Config-driven over hardcoded | Must be production-ready for multiple domains | Decision locked: All actions/feedbacks from JSON |
+| Discrete bins over continuous values | Prevents infinite node explosion, enables interval-based planning | Decision locked: User defines bin sizes in config |
+| Goal constraints over reward signals | Enables safety-first learning | Decision locked: Planning based on state intervals, not reward functions |
+| Hierarchical composition planned early | Will solve scaling problem for real-world systems | Pending: Needs Phase 5 implementation to validate |
 
 ---
 
-*Last updated: 2025-02-16 after codebase analysis*
+**Last updated: 2026-02-16 after deep transcription analysis**
