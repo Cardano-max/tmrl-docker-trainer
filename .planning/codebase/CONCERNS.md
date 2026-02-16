@@ -1,527 +1,267 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-01-31
+**Analysis Date:** 2026-02-16
 
 ## Tech Debt
 
-### Bin Discovery Still Dependent on Feedback Interpretation
+**Deprecated Discovery Algorithm Still Present:**
+- Issue: `OrderDiscovery` class (lines 575-1244 in `intelligence/order_discovery.py`) marked DEPRECATED - violates Sutton's "no state reset" constraint
+- Files: `intelligence/order_discovery.py:575-1244`, `intelligence/order_discovery.py:1237-1243`
+- Impact: Dead code consuming ~600 lines; confusion about which discovery method to use; `discover_bins_single_pass()` redirects to correct method but creates indirection
+- Fix approach: Remove deprecated `OrderDiscovery` class entirely; keep only `SuttonCompliantDiscovery` (lines 87-570)
 
-**Issue:** Recent meeting (31-Jan-2026) reveals fundamental flaw in bin discovery methodology. Current implementation in `C:/Users/ateeb/Desktop/tmrl_docker_trainer/intelligence/intelligence_experimentation.py` discovers minimum effective values by detecting feedback changes, but supervisor now clarifies: "We are trying to measure the action through the feedback but it's never gonna be the same."
+**Vestigial Reward Variable:**
+- Issue: `memory_handler.py` line 39 contains `rewards: List[float]` field - violates meeting requirement "Our goal there's no reward, there's no policy"
+- Files: `memory_handler.py:39`
+- Impact: Misleading terminology; violates semantic purity of gap_report.md requirement N2
+- Fix approach: Rename to `outcomes` or remove entirely; update any code that references this field
 
-**Files:**
-- `intelligence/intelligence_experimentation.py` (lines 406-512: `record_experiment_result`)
-- `core/brain_capacity.py` (no direct bin discovery logic)
-
-**Impact:**
-- Bins discovered in noisy environments may not be stable
-- Environmental physics (wind, weather, friction) affect feedback differently at different states
-- System assumes constant feedback response to actions (violation of physics-aware principle)
-- Cannot reliably discover bins in variable environments
-
-**Fix approach:**
-- Redesign bin discovery to focus on ACTION CONTROL parameters, not feedback observation
-- Use derivative/slope-based detection instead of absolute change threshold
-- Implement SNR (signal-to-noise ratio) filtering for feedback noise
-- Make discovery method adaptive to environmental variability
-- Requires experimental validation with variable conditions
-
----
-
-### Frame Duration Still Hardcoded in Places
-
-**Issue:** While `control/environment_timing.py` validates timing, fallback values hardcoded throughout codebase contradict Sutton requirement: "Frame interval must be DETERMINED by system, not hardcoded."
-
-**Files:**
-- `control/system_initializer.py` (line 336: "default 50ms")
-- `control/frame_action_controller.py` (lines 128, 146, 149: fallback 50ms)
-- `intelligence/order_discovery.py` (line 625: "test_frames = 15" assumes 50ms)
-- `tests/stress_test_falkordb.py` (line 270: "Time budget per frame at 20 FPS = 50ms")
-
-**Impact:**
-- If environment runs at different FPS (60, 120, etc.), fallbacks cause frame misalignment
-- Actions may be sent between environment frames, causing missed input or double input
-- Cannot adapt to dynamic environment frame rate changes
-
-**Fix approach:**
-- Remove all hardcoded 50ms/56ms/20FPS constants
-- Require timing validation BEFORE any experimentation
-- Fail startup if environment timing cannot be measured
-- Make all timing-dependent logic use validated dt dynamically
-
----
-
-### Knowledge Graph Node Duplication Risk Not Fully Tested
-
-**Issue:** Meeting 24-Jan-2026 requires "No node duplication in graphs" - nodes represent states, multiple paths should converge to same node. Current implementation in `knowledge/knowledge_manager.py` uses CREATE (not MERGE) for frame nodes, risking duplicates under concurrent conditions.
-
-**Files:**
-- `knowledge/knowledge_manager.py` (lines 161, 200-225: CREATE vs MERGE behavior)
-- `core/brain_core.py` (knowledge graph recording logic - not reviewed)
-
-**Impact:**
-- Graph bloats with duplicate state nodes if same feedback values occur
-- Knowledge graph query accuracy degrades as edges split across duplicates
-- "Where have I been?" queries become ambiguous
-
-**Fix approach:**
-- Convert all CREATE operations to MERGE with frame_id or discretized state as key
-- Add uniqueness constraint on state representation (interval values)
-- Implement deduplication cleanup procedure
-- Add test to verify MERGE behavior under concurrent writes
-
----
+**Multiple Test/Discovery Variants:**
+- Issue: `discover_v1.py`, `discover_v2.py`, `discover_v3.py` exist alongside main codebase - unclear which is current vs experimental
+- Files: `discover_v1.py`, `discover_v2.py`, `discover_v3.py`
+- Impact: Maintainability confusion; duplicated logic; unclear which version implements correct algorithm
+- Fix approach: Consolidate into single discovery entry point or move experimental variants to `archive/`
 
 ## Known Bugs
 
-### Disjoint Action Filtering Not Validated Experimentally
+**Action Sending Not Wired to Real Environment (L6 Limitation):**
+- Issue: System records actions but doesn't send them to TMRL in control mode
+- Files: `core/brain_core.py` (send_action methods exist but may not reach OpenPlanet), `adapters/tmrl_live_adapter.py:180-195`
+- Trigger: Running live validation script without manual environment setup
+- Symptoms: System initializes, discovers bins, records transitions, but car doesn't actually receive input
+- Workaround: `TMRLLiveAdapter.send_action()` implemented but requires actual TMRL/OpenPlanet connection to validate
+- Impact: System cannot close the control loop - operates in observation/learning mode only
 
-**Issue:** System filters gas+brake combinations per config, but never validates that these actions are actually disjoint in practice. What if both can be active in the environment?
-
-**Files:**
-- `core/brain_core.py` (DisjointActionValidator - filtering logic)
-- `config/system_config_corrected.json` (disjoint declarations)
-- Tests: No test of actual disjoint enforcement
-
-**Symptoms:**
-- Invalid action combinations sent to environment
-- Or valid combinations blocked, limiting exploration
-
-**Trigger:** Run exploration with simultaneous gas+brake to observe actual environment behavior
-
-**Workaround:** Validate disjoint pairs experimentally before filtering
-
----
-
-### Experimentation Phase Timeout Can Leave System Stuck
-
-**Issue:** `ExperimentationIntelligence.start_experimentation()` in `intelligence/intelligence_experimentation.py` (lines 336-368) can hang if environment stops responding during bin discovery. No timeout implemented for individual action testing.
-
-**Files:**
-- `intelligence/intelligence_experimentation.py` (lines 370-404: `get_next_experiment` has no timeout)
-
-**Symptoms:**
-- System waits forever for feedback after sending experimental action
-- User sees no progress
-- Must force-kill process
-
-**Trigger:** Environment disconnects during experimentation phase
-
-**Workaround:** Set OS-level timeout or kill process manually
-
----
-
-### Goal Orchestrator Not Fully Integrated
-
-**Issue:** Meeting requirements include goal-driven orchestration, but `control/goal_orchestrator.py` (line 256) has TODO comment: "Query knowledge graphs for path to target" - core path-finding not implemented.
-
-**Files:**
-- `control/goal_orchestrator.py` (lines 256, goal execution)
-
-**Impact:** Goals cannot be executed because system cannot query knowledge graph to find path from current state to goal state
-
----
-
-## Security Considerations
-
-### Environment Adapter Trust Boundary Not Enforced
-
-**Issue:** System trusts environment telemetry without validation. Malformed or adversarial data from TrackMania TCP socket could crash system or cause invalid state transitions.
-
-**Files:**
-- `adapters/tmrl_live_adapter.py` (lines ~120: struct.unpack without error handling)
-
-**Risk:** TCP packet corruption causes system crash
-
-**Current mitigation:** Basic try/catch in adapter
-
-**Recommendations:**
-- Add checksum/CRC validation to telemetry packets
-- Implement packet format version negotiation
-- Validate all feedback values are in expected ranges
-- Add rate limiting to socket reads
-
----
+**Simulated TMRL Interface in Validation:**
+- Issue: `stepD_live_validation.py` uses mock `TMRLInterface` class (lines 91-111) that returns random feedback values
+- Files: `stepD_live_validation.py:91-111` (get_observation returns random values)
+- Trigger: Running validation without real TrackMania + OpenPlanet running
+- Symptoms: Validation passes with synthetic data; transitions appear valid but don't reflect real environment dynamics
+- Impact: Validation script cannot verify against real environment; false positives on system correctness
+- Fix approach: Integrate with actual `TMRLLiveAdapter` connection; skip validation if TrackMania unavailable
 
 ## Performance Bottlenecks
 
-### Knowledge Graph Query Performance Under Load
+**Single-Threaded Knowledge Graph Recording (L7 Limitation):**
+- Problem: Transitions recorded to FalkorDB synchronously - each graph write blocks until complete
+- Files: `core/brain_core.py:534-567` (edge creation), `knowledge/knowledge_manager.py` (record_transition calls)
+- Current implementation: Each call to `record_transition()` executes blocking `graph.query()` (brain_core.py line 538, 554, 592, 635, 666, 681, 702)
+- Cause: FalkorDB Python client uses synchronous I/O; query executes immediately
+- Bottleneck: At high telemetry rates (500Hz+), recording one transition per frame can exceed frame duration
+- Impact: Decision cycle may miss frame boundaries; experimentation timing affected
+- Improvement path:
+  1. Implement batch recording (evidence exists in `coordinator.record_batch()` - brain_core.py suggest this but not implemented)
+  2. Move graph writes to async queue
+  3. Or: Reduce recording frequency (record every Nth transition)
 
-**Issue:** Meeting 24-Jan-2026 requires stress testing: "nodes/sec, edges/sec, query/sec" and "find throughput limits." Current tests in `tests/stress_test_falkordb.py` measure throughput, but real-time constraint is critical.
+**No Query Result Caching (L8 Limitation):**
+- Problem: Each state query hits FalkorDB directly; repeated queries for same state reexecute same computation
+- Files: `core/brain_core.py:652-674` (query_transition method)
+- Current: `query_transition()` executes Cypher query every call; no cache
+- Impact: Slight overhead for knowledge-intensive operations (awareness checking, exploration planning)
+- Improvement path: Add LRU cache on query results; invalidate on new transitions
 
-**Files:**
-- `tests/stress_test_falkordb.py` (benchmark logic exists, but results not integrated into system)
-- System makes zero performance adjustments based on test results
-
-**Problem:**
-- At 60 FPS with multiple feedbacks, system may exceed FalkorDB throughput
-- Graph queries for "untried actions" could become slow under high load
-- System has no fallback for degraded performance
-
-**Improvement path:**
-- Run stress test before initialization to determine safe FPS
-- Implement graph query caching for frequently accessed states
-- Add async graph operations to prevent blocking main loop
-- Dynamically reduce number of tracked feedbacks if throughput degrades
-
----
-
-### Experimentation Phase Inefficiency
-
-**Issue:** Bin discovery in `intelligence/intelligence_experimentation.py` increments by `min_step = 0.01` (line 313), requiring ~100 iterations to discover min value. In variable environments, this is unreliable and slow.
-
-**Files:**
-- `intelligence/intelligence_experimentation.py` (lines 313, 450-459: linear increment loop)
-
-**Problem:**
-- Fixed-size steps don't account for variable response times
-- No exponential backoff / binary search
-- Meeting 24-Jan-2026 mentioned "order of magnitude discovery" but implementation still linear
-
-**Improvement path:**
-- Implement exponential search (0.01 → 0.1 → 0.3 → 0.6 → binary refine)
-- Reduce iterations from ~100 to ~15-20
-- Adapt step size based on environment response time
-
----
+**No Per-Frame Computation Budget Enforcement:**
+- Problem: Experimentation and intelligence modules may exceed frame duration without detection
+- Files: `intelligence/intelligence_experimentation.py:probe_one_frame()` has logging warning (line 826) but no exception
+- Current: Only logs warning if cycle exceeds frame_duration_s
+- Impact: Silent timing violations; frame synchronization constraint (Sutton requirement) may be violated unnoticed
+- Fix approach: Implement strict frame-budget enforcement; raise exception if exceeded
 
 ## Fragile Areas
 
-### Timing Synchronization Logic
+**Bin Discovery Relies on Environmental Stability:**
+- Files: `intelligence/order_discovery.py:87-570` (SuttonCompliantDiscovery class), `intelligence/intelligence_experimentation.py:273-635`
+- Why fragile: Algorithm assumes environment response is deterministic and repeatable; requires multiple probes per action value
+- Safe modification:
+  1. Add environment stability check before experimentation
+  2. Detect if same action produces different feedback delta (would indicate non-deterministic environment)
+  3. Increase probe repetitions automatically if variance detected
+- Test coverage gaps: No tests validate discovery against stochastic environments; all test cases assume deterministic response
 
-**Files:**
-- `control/environment_timing.py` (timing validation)
-- `control/frame_action_controller.py` (action sending cadence)
-- `intelligence/intelligence_experimentation.py` (wait_fn callback)
+**State Discretization Precision Depends on Feedback Format:**
+- Files: `core/brain_core.py:246-260` (update_precision method), `brain_core.py:504-520` (create indices)
+- Fragility: Resolution = precision detected from feedback decimals; if feedback values are imprecise or noisy, resolution becomes too coarse
+- Safe modification:
+  1. Validate that detected precision matches expected precision from config
+  2. Add manual precision override in config
+  3. Add noise filtering before precision detection
+- Test coverage: No tests validate precision detection against noisy feedback
 
-**Why fragile:**
-- System's concept of "a frame" depends entirely on environment definition
-- If environment changes FPS mid-session, system may desynchronize
-- No continuous re-validation of timing assumptions
-- Meeting 31-Jan-2026 shows deep confusion about frame alignment
+**Knowledge Graph Query Performance Unknown at Scale:**
+- Files: `core/brain_core.py:420-718` (KnowledgeGraph class), `intelligence/intelligence_repeat.py:98-170` (decision making queries)
+- Unknown: How many transitions can FalkorDB handle before queries degrade
+- Fragility: No explicit limits; no scaling tests; unknown query O(N) behavior
+- Safe modification: Add monitoring/metrics on query execution time; flag if queries exceed threshold
+- Impact: System may silently degrade as experience grows
 
-**Safe modification:**
-- Always measure environment timing at start
-- Validate timing every N seconds during operation
-- Use measured dt for ALL timing calculations, never config
-- Add telemetry logging of frame-action alignment
-
-**Test coverage:**
-- No test of environment FPS change mid-session
-- No test of action misalignment detection
-- No test of timing drift recovery
-
----
-
-### Experimentation Coordinator Callback Architecture
-
-**Files:**
-- `intelligence/intelligence_experimentation.py` (lines 666-726: ExperimentationCoordinator)
-
-**Why fragile:**
-- Requires 4 separate callback functions (send_action, get_feedbacks, wait, reset)
-- No error handling if callbacks return None or raise exceptions
-- No timeout handling if callbacks block
-- Coupling between experimentation logic and environment interaction
-
-**Safe modification:**
-- Add wrapper class to validate callback return values
-- Implement timeout decorators on callbacks
-- Add retry logic for transient failures
-- Test with callback failures
-
-**Test coverage:**
-- No test of callback exceptions
-- No test of callback timeouts
-- No test of environment disconnect during experimentation
-
----
+**Adaptation to New Environment Requires Code Changes:**
+- Files: `adapters/tmrl_adapter.py:242-334` (TMRLAdapter hardcodes TrackMania field parsing), `adapters/tmrl_live_adapter.py:330-395` (feedback naming)
+- Fragility: New environment requires custom adapter implementation; framework exists but integration untested
+- Test coverage: Only TMRL adapter tested; generic adapter pattern validated in code but not with real environment
 
 ## Scaling Limits
 
-### FalkorDB Node/Edge Throughput at High FPS
+**FalkorDB Graph Growth (Unknown Capacity):**
+- Current state: No transitions recorded yet (test system only)
+- Theoretical limit: FalkorDB has no known published limits in codebase
+- Concern: How many nodes/edges before queries degrade?
+- Scaling path:
+  1. Run stress tests (`tests/stress_test_falkordb.py` exists - 370 lines)
+  2. Monitor query times as graph grows
+  3. Implement graph partitioning if single-graph scaling fails
+  4. Consider sharding by feedback type (already one graph per feedback)
 
-**Current capacity:** Not measured in production
+**Memory Usage with Large Experience:**
+- Concern: `StateManager` caches state history; `MemoryHandler` caches transitions
+- Unknown: How much memory for 1M transitions? 10M? 100M?
+- Scaling path: Add memory monitoring; implement LRU eviction for state cache
 
-**Limit:** Stress test `tests/stress_test_falkordb.py` shows potential issues at:
-- 60 FPS with 5+ feedbacks = ~300 nodes/sec, ~300 edges/sec
-- Query latency under load not characterized
-
-**Scaling path:**
-- Graph query caching (most states queried repeatedly)
-- Async graph writes (decouple recording from action loop)
-- Graph sharding by feedback type (already supported, not optimized)
-- Consider read-replica for query-heavy operations
-
----
-
-### Memory Usage of Knowledge Graphs
-
-**Issue:** System stores one node per frame indefinitely. After 1 hour at 60 FPS = 216,000 nodes. With 5 feedbacks = 1.08M nodes total.
-
-**Files:**
-- Knowledge storage: `knowledge/knowledge_manager.py`, FalkorDB persistence
-
-**Limit:** Unknown
-
-**Scaling path:**
-- Implement graph pruning: keep only last N frames + important state landmarks
-- Compress old transitions into statistical summaries
-- Archive old knowledge to disk, keep hot set in memory
-- Test maximum sustainable graph size
-
----
+**Action Space Explosion with Disjoint Filtering:**
+- Files: `core/brain_core.py:52-129` (DisjointActionValidator class)
+- Current: All combinations generated then filtered for disjoint violations
+- Issue: For N actions with M bins each, generates N^M combinations then filters
+- Example: 3 actions × 10 bins each = 1000 combinations generated (exponential growth)
+- Scaling limit: ~5 actions × ~5 bins = manageable; ~10 actions × ~10 bins = 10^10 combinations (memory explosion)
+- Scaling path: Generate only valid combinations (skip disjoint violators during generation, not after)
 
 ## Dependencies at Risk
 
-### FalkorDB Library Usage
+**FalkorDB Python Client Dependency:**
+- Risk: FalkorDB is relatively young graph database; Python client may have stability issues
+- Evidence: No version pinning in codebase (setup/requirements not shown)
+- Impact: Graph write failures could halt system; no fallback storage
+- Migration plan: Already using abstract `KnowledgeGraph` interface - could swap backend to Neo4j or PostgreSQL if needed
 
-**Risk:** FalkorDB is young graph database. Risk of:
-- API breaking changes (currently using `select_graph()` - may not be stable)
-- Performance regressions
-- Limited query optimization
+**No Async/Threading for Background Operations:**
+- Files: `adapters/tmrl_live_adapter.py:15-20` (imports threading), `adapters/tmrl_live_adapter.py:166-207` (_recv_thread)
+- Risk: Live adapter uses threading for receive loop but main system is single-threaded
+- Fragility: Thread safety of state variables not guaranteed; potential race conditions on `self._latest_obs`
+- Impact: System may crash or deadlock under concurrent access
+- Mitigation: Add thread locks around shared state or use queue.Queue (thread-safe by design)
 
-**Impact:** If FalkorDB becomes unreliable, entire knowledge persistence is broken
+## Security Considerations
 
-**Migration plan:**
-- If needed, abstract graph interface via wrapper
-- Support fallback to RocksDB or LevelDB (key-value store)
-- Document graph schema for other implementations
+**No Input Validation on Environment Feedback:**
+- Issue: Feedbacks accepted from environment without range/type validation
+- Files: `adapters/tmrl_live_adapter.py:273-305` (get_observation returns dict directly), no validation before use
+- Risk: Malformed feedback could cause state manager overflow or incorrect decisions
+- Current mitigation: None visible
+- Recommendations: Validate feedback values against expected ranges before recording
 
----
+**No Authentication for TMRL Connection:**
+- Issue: TMRL/OpenPlanet connection uses TCP socket with no authentication
+- Files: `adapters/tmrl_live_adapter.py:172-178` (socket connection)
+- Risk: Attacker could inject fake feedback or actions on shared network
+- Recommendations:
+  1. Add authentication token to TMRL protocol
+  2. Use encrypted connection (TLS)
+  3. Document network security requirements
 
-### vgamepad Virtual Controller Dependency
-
-**Risk:** ViGEmBus driver dependency on Windows. If driver updates or becomes unsupported:
-- System cannot send actions to TrackMania
-- No fallback control method
-
-**Impact:** System completely non-functional
-
-**Migration plan:**
-- If ViGEmBus fails, implement TCP-based action protocol (environment listens on port)
-- Add action logging to file (can be replayed)
-- Support keyboard input simulation fallback
-
----
-
-## Missing Critical Features
-
-### State Space Exploration Not Exhaustive
-
-**Issue:** System can only explore state space reachable from current position. If environment has unreachable regions, system never learns them.
-
-**Problem:** Meeting requirements don't address exploration boundaries. "All reachable states explored" is explicitly rejected, but system has no concept of exploration frontier.
-
-**Blocks:** Cannot know when exploration is "complete"
-
----
-
-### Episode Replay Capability Not Implemented
-
-**Issue:** Meeting requirements include "Episode 4337, repeat that one" but system has no replay mechanism.
-
-**Files:** Mentioned in `docs/system_architecture.md` (line 182) as future work, not implemented
-
-**Blocks:** Cannot validate repeated actions produce same results
-
----
-
-### MPC (Model Predictive Control) Deferred
-
-**Issue:** Supervisor explicitly asked to defer MPC implementation until three-state architecture is solid. Currently, system has no predictive planning capability.
-
-**Files:** `docs/system_architecture.md` (line 532: "[ ] MPC Implementation")
-
-**Impact:** System cannot look ahead; only reacts to immediate state
-
----
+**Knowledge Graphs Not Backed Up:**
+- Issue: FalkorDB graphs stored locally; no backup mechanism visible
+- Files: No backup code found in `knowledge_manager.py` or `brain_core.py`
+- Risk: Loss of all acquired knowledge if database corrupted or deleted
+- Recommendations: Implement periodic graph export to disk; implement rollback capability
 
 ## Test Coverage Gaps
 
-### No Test of Disjoint Action Enforcement Under Concurrent Actions
+**Bin Discovery Against Non-Deterministic Environments:**
+- Untested: What happens if same action produces different feedback delta on repeated probes?
+- Files: `intelligence/order_discovery.py:87-570`, `tests/test_delta_discovery.py`
+- Risk: Discovery algorithm could fail silently or produce incorrect bins
+- Priority: **HIGH** - affects core capability
+- Current tests: All use deterministic pong environment
 
-**What's not tested:**
-- Can system block invalid combinations (gas+brake) in real environment?
-- Does discretizer correctly catch disjoint violations?
+**Large-Scale Knowledge Graph Operations:**
+- Untested: Performance with >1M transitions
+- Files: `tests/stress_test_falkordb.py` exists but unclear if comprehensive
+- Risk: System scales to production but queries degrade unexpectedly
+- Priority: **MEDIUM** - affects production readiness
 
-**Files:**
-- `core/brain_core.py` (DisjointActionValidator - tested only in isolation, not integrated)
-- Tests: `tests/live_system_validator.py` (doesn't test disjoint enforcement)
+**Thread Safety of Live Adapter:**
+- Untested: Concurrent access to `_latest_obs`, `_recv_thread`
+- Files: `adapters/tmrl_live_adapter.py:166-207`, `adapters/tmrl_live_adapter.py:279-290`
+- Risk: Race conditions under simultaneous reads/writes
+- Priority: **HIGH** - affects system stability
 
-**Risk:** Silent failure where invalid combinations are sent to environment
+**Disjoint Action Validation Edge Cases:**
+- Untested: What if all actions are mutually disjoint? What if no actions are disjoint?
+- Files: `core/brain_core.py:81-104` (is_valid_combination)
+- Risk: Empty action space or overconstrained system
+- Priority: **MEDIUM**
 
-**Priority:** High
+**Adaptation to New Environments:**
+- Untested: Generic adapter pattern with non-TMRL environment
+- Files: `adapters/tmrl_adapter.py:58-91` (GenericEnvironmentAdapter), but no tests
+- Risk: Pattern documented but never validated; new environments may fail silently
+- Priority: **MEDIUM** - blocks environment portability claims
 
----
+## Missing Critical Features
 
-### No Test of Timing Validation Integration
+**No Real-Time Action Sending (L6):**
+- Problem: EnvironmentProtocol defined but action transmission to environment not verified
+- Blocks: System cannot close control loop; only observation/learning possible
+- Implementation exists: `TMRLLiveAdapter.send_action()` in `adapters/tmrl_live_adapter.py:180-195`
+- Blocker: No validation that actions actually reach TrackMania; no feedback loop confirmation
+- Fix: Implement action echo from environment (send action X, verify TrackMania received X)
 
-**What's not tested:**
-- Does system startup fail if timing validation fails?
-- Does timing mismatch block initialization?
-- What happens if environment FPS changes mid-session?
+**No Pathfinding to Goal State (Future Constraints):**
+- Problem: `goal_orchestrator.py:256` has TODO comment "Query knowledge graphs for path to target"
+- Blocks: Closed-ended goals cannot plan path to target
+- Current: Returns optimistic default (True, 0.5)
+- Impact: Goal validation incomplete; system cannot verify feasibility of goals
+- Requirements: Implement graph traversal to find action sequence from current state to goal state
 
-**Files:**
-- `control/environment_timing.py` (validator exists but not integrated into initialization)
-- `control/system_initializer.py` (timing_validation stage exists but untested)
+**No Probabilistic Pathfinding (Architecture Constraint):**
+- Problem: Mentioned in Sutton transcripts as future work; not implemented
+- Blocks: Multi-step planning in stochastic environments
+- Current: Deterministic system only
+- Status: INTENTIONALLY NOT IMPLEMENTED per supervisor ("learn MPC first")
+- Impact: None currently (deterministic system constraint is intentional)
 
-**Risk:** System runs with wrong frame timing, actions misaligned
+**No MPC Integration (Intentional Future Work):**
+- Problem: Supervisor explicitly said "not implement MPC and control car... just learn and understand MPC"
+- Status: NOT A BUG - intentional design decision
+- Evidence: latest_meeting_transcript.txt lines ~200-250
+- When to implement: After MPC study complete (supervisor referenced do-mpc.com)
 
-**Priority:** High
+## Architectural Constraints / Known Limitations
 
----
+**L1-L12 From known_limitations.md (ALL NOTED - Most Resolved, Some Remain):**
 
-### No Test of Knowledge Persistence Across Sessions
+**RESOLVED Issues:**
+- ✅ L1: Experimentation interference - FIXED (2026-01-12)
+- ✅ L2: Knowledge clearing - FIXED
+- ✅ L6: Real-time action sending - IMPLEMENTED (awaits validation)
 
-**What's not tested:**
-- Can system load previous knowledge and skip bin discovery?
-- Does "Do you want to use it?" prompt work correctly?
-- Are graphs properly restored from FalkorDB?
+**REMAINING Limitations:**
+- L3: Failure conditions assume TrackMania feedback names (`speed`, `lidar_0`, etc.) - workaround documented
+- L5: TMRL memory format only - workaround: implement custom `MemoryExtractor`
+- L7: Single-threaded knowledge recording - workaround: use batch recording
+- L8: No query caching - low impact, documented
+- L9: OpenPlanet required - environmental requirement
+- L10: Docker Windows networking - documented workaround with IP addresses
+- L11: One action per frame - architectural constraint, intentional
+- L12: Episode length not goal-based - architectural constraint, intentional
 
-**Files:**
-- `control/system_initializer.py` (prior knowledge check - partially tested)
-- `knowledge/knowledge_manager.py` (persistence - not tested)
-
-**Risk:** System skips critical initialization or loses knowledge
-
-**Priority:** Medium
-
----
-
-### No Test of Experimentation Failure Modes
-
-**What's not tested:**
-- Environment becomes unresponsive during bin discovery
-- Feedback values stuck at constant (min discovery hangs)
-- Callback timeout handling
-
-**Files:**
-- `intelligence/intelligence_experimentation.py` (no timeout logic)
-
-**Risk:** System hangs indefinitely
-
-**Priority:** High
-
----
-
-### No Test of Stress Conditions
-
-**What's not tested:**
-- System behavior under graph load (stress test exists but not integrated)
-- Action sending cadence under CPU load
-- Knowledge graph query latency degradation
-
-**Files:**
-- `tests/stress_test_falkordb.py` (standalone, not integrated)
-
-**Risk:** Unknown failure mode in production
-
-**Priority:** Medium
-
----
-
-## Architectural Concerns
-
-### Three-State Architecture Implementation Incomplete
-
-**Issue:** Meeting requirements define three states (Internal, Environment, Sensorial), but implementation doesn't clearly separate them.
-
-**Files:**
-- `core/brain_core.py` - doesn't explicitly represent Internal vs Environment vs Sensorial state
-- `core/state_manager.py` - unclear what state it manages
-
-**Impact:** Cannot validate "awareness" properly - comparison of predicted (internal) vs actual (environment) is implicit
-
-**Fix:** Create explicit StateVector class with three components, use throughout
-
----
-
-### Goal Orchestration Not Wired
-
-**Issue:** Meeting requires "Goal is an orchestrator, all capacities used to achieve this" but goal_orchestrator.py is isolated from main system flow.
-
-**Files:**
-- `control/goal_orchestrator.py` (lines 256: unimplemented)
-- `run_order_system.py` (doesn't use goal orchestrator)
-- No integration point in main system flow
-
-**Impact:** Goals cannot be executed
-
----
-
-### Awareness Intelligence Not Fully Validated
-
-**Issue:** Awareness comparison logic exists but never tested against real environment discrepancies.
-
-**Files:**
-- `intelligence/intelligence_awareness.py` (line 218: logging logic exists)
-
-**Problem:** System claims to compare prediction vs reality but no evidence it works in practice
-
----
-
-## Requirements-Implementation Gaps
-
-### From 24-Jan-2026 Meeting (MEET_REQ.TXT)
-
-| Requirement | Status | Notes |
-|-----------|--------|-------|
-| REQ-001: Frame timing from environment, not hardcoded | ⚠️ Partial | Timing validator exists but fallbacks still hardcoded |
-| REQ-002: Initialization pipeline with validation | ✓ Implemented | system_initializer.py structure in place |
-| REQ-003: Bin acquisition mandatory before recording | ✓ Implemented | experimentation_intelligence.py enforces this |
-| REQ-005: Randomized test harness for bin discovery | ✗ Missing | No test generates random min/max to validate algorithm |
-| REQ-006: No node duplication in graphs | ⚠️ Partial | CREATE used, not MERGE - risk remains |
-| REQ-007: Graph recording stress tested | ✗ Not integrated | stress_test_falkordb.py exists but results unused |
-| REQ-008: Separate capacity from intelligence | ✓ Implemented | brain_capacity.py and intelligence modules separate |
-
-**Priority fixes:** REQ-005, REQ-006, REQ-007
-
----
-
-### From 31-Jan-2026 Meeting (meeting_transcript_31Jan2026.txt)
-
-| Requirement | Status | Notes |
-|-----------|--------|-------|
-| Bin discovery focus on ACTION, not feedback | ✗ Missing | Current implementation measures feedback change |
-| SNR filtering for noisy feedback | ✗ Missing | No noise filtering implemented |
-| Derivative-based bin detection | ✗ Missing | Only absolute change threshold |
-| Frame-based action control | ⚠️ Partial | logic exists but timing validation incomplete |
-| Minimum value per frame capability | ✗ Unclear | Implementation doesn't expose this |
-
-**Critical gaps:** Bin discovery needs fundamental redesign
-
----
+**Impact:** Most limitations are documented and have workarounds. None are critical blockers.
 
 ## Summary by Severity
 
-### Critical (Blocks Core Functionality)
-
-1. Bin discovery flawed - focuses on feedback instead of action control
-2. Goal orchestrator unimplemented - goals cannot execute
-3. Frame timing validation not integrated - actions may misalign
-4. Node duplication risk in graphs - knowledge integrity compromised
-
-### High (Degrades Quality)
-
-5. No timeout handling in experimentation - can hang system
-6. Knowledge graph performance not validated - unknown scaling limits
-7. Awareness intelligence unvalidated - comparison logic untested
-8. Disjoint filtering not tested in practice - may allow invalid actions
-
-### Medium (Future Issues)
-
-9. Episode replay not implemented - cannot repeat experiments
-10. MPC deferred but not planned - no predictive capability
-11. Memory usage of graphs unbounded - will cause bloat
-12. Experimentation efficiency poor - linear search inefficient
-
-### Low (Technical Debt)
-
-13. Code has isolated TODOs - goal_orchestrator has unimplemented feature
-14. Hardcoded constants scattered - violates Sutton's principle
-15. Test coverage gaps in multiple areas
-16. Dependency risks with FalkorDB and vgamepad
+| Severity | Category | Count | Status |
+|----------|----------|-------|--------|
+| **CRITICAL** | Live environment validation accuracy | 1 | Simulated interface needs real connection |
+| **HIGH** | Deprecated dead code | 2 | `OrderDiscovery` class, multiple discovery versions |
+| **HIGH** | Thread safety of live adapter | 1 | Race conditions possible |
+| **HIGH** | Non-deterministic environment testing | 1 | No validation of bin discovery robustness |
+| **MEDIUM** | Performance scalability unknown | 3 | Graph scaling, memory scaling, action space |
+| **MEDIUM** | Vestigial reward variable | 1 | Semantic pollution |
+| **MEDIUM** | Test coverage gaps (new environments) | 1 | Adapter pattern untested |
+| **LOW** | Query caching (performance optimization) | 1 | Documented, low impact |
+| **INTENTIONAL** | MPC not implemented | 1 | By design - supervisor mandate |
+| **INTENTIONAL** | Pathfinding not implemented | 1 | By design - future work |
 
 ---
 
-*Concerns analysis: 2026-01-31*
+*Concerns audit: 2026-02-16*

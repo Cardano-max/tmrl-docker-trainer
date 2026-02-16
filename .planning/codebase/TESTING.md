@@ -1,124 +1,275 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-01-31
+**Analysis Date:** 2026-02-16
 
 ## Test Framework
 
 **Runner:**
-- No formal test framework detected (pytest, unittest not explicitly configured)
-- Tests are standalone Python scripts with manual execution
-- Two test categories: Live integration tests and demo harnesses
+- Python's built-in `unittest` and manual test runners (no pytest/nose detected)
+- Tests typically run via direct module execution or import
 
 **Assertion Library:**
-- No formal assertion library used
-- Manual assertions: `if not condition: return` or logging errors
-- Success determined by: data presence, connection success, operation completion
+- Python's built-in `assert` statements
+- Manual validation with `print()` output
+- No external assertion framework (pytest, nose)
 
 **Run Commands:**
 ```bash
-python test_sutton_live.py           # Sutton-compliant bin discovery
-python tests/test_knowledge_live.py  # Knowledge graph live test
-python demo_test_harness.py          # Demo validation of all tickets
-python tests/live_system_validator.py # Full system validation
+# Direct test execution
+python tests/test_delta_discovery.py
+
+# Demo test harness
+python demo_test_harness.py
+
+# Individual test discovery script
+python discover_v1.py
+python discover_v2.py
+python discover_v3.py
 ```
 
 ## Test File Organization
 
 **Location:**
-- Dedicated test directory: `tests/` (contains `test_knowledge_live.py`, `live_system_validator.py`, `stress_test_falkordb.py`)
-- Root-level test scripts: `test_sutton_live.py`, `demo_test_harness.py`, `demo_meeting_requirements.py`
-- Live validation scripts integrated with source
+- Tests co-located in `tests/` directory at project root
+- Test files paired with functionality (e.g., `test_delta_discovery.py` for experimentation algorithm)
+- Demo/integration tests in root: `demo_test_harness.py`, `test_sutton_live.py`
+- Live validation tests: `tests/test_knowledge_live.py`, `tests/test_live_delta_discovery.py`
 
 **Naming:**
-- Prefix with `test_` or `live_` for discovery: `test_knowledge_live.py`, `test_sutton_live.py`
-- Demo/validation names are descriptive: `demo_test_harness.py`, `live_system_validator.py`
-- Stress tests: `stress_test_falkordb.py`
+- Test files: `test_*.py` or `*_test.py`
+- Test functions: `test_*()` or `TEST-*` (in harness registry)
+- Mock classes: `Mock*Environment` or similar
+- Test data: `*_data.py` or inline mock objects
 
 **Structure:**
 ```
 tests/
-├── test_knowledge_live.py          # Knowledge graph with FalkorDB
-├── live_system_validator.py        # System-wide validation
-└── stress_test_falkordb.py         # Database stress test
-
-Root:
-├── test_sutton_live.py             # Order discovery algorithm
-├── demo_test_harness.py            # Ticket validation demo
-└── demo_meeting_requirements.py    # Requirements verification
+├── micro_test_1.py          # Focused unit tests
+├── micro_test_2_brake.py    # Specific scenario tests
+├── stress_test_falkordb.py  # Database stress tests
+├── test_delta_discovery.py  # Algorithm validation
+├── test_knowledge_live.py   # Live knowledge graph tests
+└── test_live_delta_discovery.py
 ```
 
 ## Test Structure
 
 **Suite Organization:**
+From `tests/test_delta_discovery.py`:
 ```python
-# test_sutton_live.py pattern
-def main():
-    print("\n" + "=" * 60)
-    print("SUTTON-COMPLIANT BIN DISCOVERY (BASELINE-SUBTRACTED)")
-    print("=" * 60)
+# Mock environments at top
+class MockPongEnvironment:
+    def __init__(self, max_speed=1.0, min_effective=0.1, precision=6):
+        self.position = 5.0
+        # ...
 
-    # Phase 1: Connection
-    print("\n" + "=" * 60)
-    print("PHASE 1: CONNECTION")
-    print("=" * 60)
-    # ... execution code
-
-    # Phase 2: Warm up car
+# Individual test functions
+def test_single_pass_pong():
+    """REQ-C04: Single descending pass finds both max and min."""
+    print("\n" + "="*60)
+    print("TEST 1: Single Descending Pass (Pong)")
+    print("="*60)
     # ...
+    assert a_max is not None
+    print("  [PASS]")
+    return True
 
-    # Phase 3: Discovery
-    # ...
-
-    # Phase 4: Results
-    # ...
-
-    return 0
-
-if __name__ == '__main__':
-    sys.exit(main())
+# Test registry pattern
+def run_all_tests():
+    tests = [
+        ("Single Pass (Pong)", test_single_pass_pong),
+        ("Bins = k*min", test_bins_k_times_min),
+        # ...
+    ]
+    for name, test_fn in tests:
+        try:
+            if test_fn():
+                passed += 1
 ```
 
 **Patterns:**
-- Phase-based structure with clear section markers
-- Visual progress output (prints and separators)
-- Early failure return (check conditions, return on failure)
-- Final validation and summary
-- Exit code return (0 for success, non-zero for failure)
+- No setup/teardown methods; local state initialization in tests
+- Print-based output with ASCII separators for readability
+- Return boolean from test functions (True = pass, False = fail)
+- Exception handling wraps entire test execution
+- Track pass/fail count and report at end
 
-**Example from `test_sutton_live.py`:**
+## Mocking
+
+**Framework:** Manual mock objects (no `unittest.mock` or `pytest.mock`)
+
+**Patterns:**
 ```python
-def main():
-    print("\n" + "=" * 60)
-    print("PHASE 1: CONNECTION")
-    print("=" * 60)
+# Mock environment class (full implementation)
+class MockTrackManiaEnvironment:
+    """TrackMania-like: speed 0-500, gas/brake 0-1, max accel 2.5/frame"""
+    def __init__(self):
+        self.speed = 0.0
+        self.position = 0.0
+        self.precision = 7
 
-    from adapters.tmrl_live_adapter import TMRLLiveAdapter
+    def get_feedbacks(self):
+        return {
+            'speed': round(self.speed, self.precision),
+            'position': round(self.position, self.precision),
+        }
 
-    adapter = TMRLLiveAdapter(host='127.0.0.1', port=9000)
+    def send_action(self, action):
+        gas = action.get('gas', 0.0)
+        brake = action.get('brake', 0.0)
+        # Simulate physics...
 
-    print(f"\n[1] Connecting to TrackMania...")
-    if not adapter.connect(timeout=5.0):
-        print("  [FAIL] Could not connect")
-        return 1  # Early return on failure
-
-    print("  [OK] Connected")
-
-    # ... more phases
-
-    return 0
+# Dependency injection in tests
+env = MockTrackManiaEnvironment()
+coordinator = ExperimentationCoordinator(
+    actions_config=actions_config,
+    send_action_fn=env.send_action,      # Mock injected
+    get_feedbacks_fn=env.get_feedbacks,  # Mock injected
+    wait_fn=lambda t: None,               # Mock lambda
+    reset_fn=env.reset                    # Mock method
+)
 ```
 
-## Test Registry Pattern
+**What to Mock:**
+- Environment interactions: `send_action_fn`, `get_feedbacks_fn`, `wait_fn`, `reset_fn`
+- External database (FalkorDB) is NOT mocked - tests expect real database
+- Physics/dynamics - mock environment classes replicate system behavior
+- Time delays - replaced with lambda `lambda t: None`
 
-**From `demo_test_harness.py`:**
+**What NOT to Mock:**
+- Real algorithm implementation (test the actual code)
+- Database operations (tests validate against real FalkorDB instance)
+- State managers and knowledge graphs (tested against real implementations)
+- Discretization logic (core system being tested)
+
+## Fixtures and Factories
+
+**Test Data:**
+```python
+# Mock environment as fixture/factory
+class MockPongEnvironment:
+    @staticmethod
+    def create_with_defaults():
+        return MockPongEnvironment(max_speed=1.0, min_effective=0.1)
+
+# Inline data structures
+actions_config = {
+    'gas': {'type': 'continuous', 'range': [0.0, 1.0]},
+    'brake': {'type': 'continuous', 'range': [0.0, 1.0]},
+}
+
+# Test probe data
+probes = [
+    ProbeResult(
+        action_value=val,
+        delta_state=delta,
+        feedback_before=fb_before,
+        feedback_after=fb_after,
+        frame_duration_s=0.05
+    )
+    for val in test_values
+]
+```
+
+**Location:**
+- Mock environment classes defined at top of test file
+- Configuration dictionaries defined per test or in setup
+- Dataclass instances created inline with real values
+- No separate fixtures directory
+
+## Coverage
+
+**Requirements:** Not explicitly enforced (no .coveragerc found)
+
+**View Coverage:** Not automated in codebase
+
+**Strategy:**
+- Experimentation algorithm tested exhaustively: `test_delta_discovery.py` covers 11 test cases
+- System integration tested with `demo_test_harness.py` (live TrackMania environment)
+- Live validation via `test_sutton_live.py` (requires real environment connection)
+- Mock environments validate algorithm across different system dynamics
+
+## Test Types
+
+**Unit Tests:**
+- Scope: Individual components (ActionDiscretizer, FeedbackDiscretizer, FrameBinDiscovery)
+- Approach: Create mock environments, execute single operations, assert outcomes
+- Example: `test_single_pass_pong()` tests algorithm on Pong mock
+- Fast execution, no external dependencies needed
+
+**Integration Tests:**
+- Scope: Full experimentation flow (coordinator + intelligence + mock environment)
+- Approach: Run complete bin discovery algorithm, validate all phases
+- Example: `test_full_coordinator_pong()` and `test_full_coordinator_trackmania()`
+- Tests interaction between ExperimentationCoordinator, ExperimentationIntelligence, mocks
+
+**Live Tests:**
+- Scope: Real environment interaction (requires TrackMania + TMRL + FalkorDB)
+- Approach: `demo_test_harness.py` connects to actual game, records transitions
+- Folder: `tests/test_*_live.py` files
+- Documentation: `docs/DEMO_RUNBOOK.md` describes setup
+- NO mocks - validates against real physics and real database
+
+**E2E Tests:**
+- Not explicitly structured but enabled by test harness registry pattern
+- `TestRegistry` class allows running named tests from console
+- Could plug into CI/CD pipeline
+
+## Common Patterns
+
+**Async Testing:**
+Not used (no async code in codebase)
+
+**Error Testing:**
+```python
+# Test exception raising
+def test_emergency_fallback():
+    intel = ExperimentationIntelligence(actions_config)
+    try:
+        intel.skip_experimentation_with_defaults()
+        print("  [FAIL] Should have raised error")
+        return False
+    except RuntimeError:
+        print("  Correctly rejected without flag")
+    return True
+```
+
+**Parametrized Testing (Custom):**
+```python
+# Manual loop over test cases instead of pytest.mark.parametrize
+def run_all_tests():
+    tests = [
+        ("Single Pass (Pong)", test_single_pass_pong),
+        ("Bins = k*min", test_bins_k_times_min),
+        ("Proportionality", test_proportionality_verification),
+    ]
+
+    passed = 0
+    failed = 0
+    for name, test_fn in tests:
+        try:
+            if test_fn():
+                passed += 1
+            else:
+                failed += 1
+        except Exception as e:
+            failed += 1
+            traceback.print_exc()
+
+    print(f"RESULTS: {passed}/{passed + failed} passed")
+```
+
+**Test Output Format:**
+- ASCII headers with `"="*60` for sections
+- Test names printed at start: `print("TEST 1: Single Descending Pass (Pong)")`
+- Progress output during execution: `print(f"  a={val:8.4f} -> delta={delta:.6f}")`
+- Results at end: `print("  [PASS]")` or `print("  [FAIL]")`
+- Summary line: `print(f"RESULTS: {passed}/{passed + failed} passed, {failed} failed")`
+
+**Demo Harness Pattern:**
+From `demo_test_harness.py` - test registry with decorator:
 ```python
 class TestRegistry:
-    """Registry of all available tests using registry pattern"""
-
-    def __init__(self):
-        self._tests: Dict[str, Callable] = {}
-        self._descriptions: Dict[str, str] = {}
-
     def register(self, name: str, description: str):
         """Decorator to register a test function"""
         def decorator(func: Callable):
@@ -127,343 +278,26 @@ class TestRegistry:
             return func
         return decorator
 
-    def run_test(self, name: str, harness: 'DemoTestHarness') -> TestResult:
-        """Run a test by name"""
-        test_func = self._tests.get(name)
-        if not test_func:
-            return TestResult(
-                test_name=name,
-                passed=False,
-                error=f"Test '{name}' not found"
-            )
-
-        start = time.time()
-        try:
-            result = test_func(harness)
-            result.duration = time.time() - start
-            return result
-        except Exception as e:
-            return TestResult(
-                test_name=name,
-                passed=False,
-                error=str(e),
-                duration=time.time() - start
-            )
-```
-
-**Usage:**
-```python
-# Decorator-based registration
 registry = TestRegistry()
 
-@registry.register("knowledge_graph", "Test knowledge graph persistence")
-def test_knowledge_graph(harness):
+@registry.register("per_frame_execution", "Verify per-frame action execution")
+def test_per_frame_execution(harness: DemoTestHarness) -> TestResult:
     # Test implementation
-    return TestResult(test_name="knowledge_graph", passed=True)
-
-# Running tests
-result = registry.run_test("knowledge_graph", harness)
+    return TestResult(test_name="per_frame_execution", passed=True, ...)
 ```
 
-## Mocking
-
-**Framework:** No mocking library (unittest.mock, pytest-mock not used)
-
-**Patterns:**
-- **NO MOCKS** - Codebase uses real services throughout
-- Real TrackMania connection (TCP socket to port 9000)
-- Real FalkorDB database (Docker container)
-- Real vgamepad controller (ViGEmBus driver)
-
-**Documented requirement from `demo_test_harness.py`:**
-```python
-"""
-DEMO TEST HARNESS - Live Validation of All Tickets
-
-Console-based test harness for validating:
-- Ticket-1: Per-frame action execution
-- Ticket-2: Experimentation module (min/max order discovery)
-- Ticket-3: FalkorDB knowledge graph (one node per frame)
-
-NO MOCKS. NO SIMULATED DATA. ALL REAL.
-
-Requirements:
-    - TrackMania 2020 running with OpenPlanet
-    - TMRL_GrabData plugin active (TCP port 9000)
-    - FalkorDB running (docker start falkordb)
-    - ViGEmBus driver installed (for vgamepad)
-    - Car on track ready to drive
-"""
-```
-
-**Connection mocking pattern (fallback approach in `tests/test_knowledge_live.py`):**
-```python
-# Try multiple connection methods with fallback
-def try_socket_connection():
-    """Try TCP socket connection"""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        sock.connect(('127.0.0.1', 9000))
-        # ... use real connection
-        return connection_object
-    except Exception as e:
-        print(f"[SKIP] TCP socket (port 9000): {e}")
-    return None
-
-# Fallback to HTTP if socket fails
-connection = try_socket_connection()
-if connection is None:
-    connection = try_http_connection(8080)
-if connection is None:
-    connection = try_http_connection(29201)
-```
-
-**What to Mock:** Nothing in this codebase - all tests are integration tests against real systems
-
-**What NOT to Mock:** Everything (real connections preferred for validation of Sutton constraints)
-
-## Fixtures and Factories
-
-**Test Data:**
-```python
-# Pattern from test_sutton_live.py
-discovery = SuttonCompliantDiscovery(adapter, feedback_name='speed')
-
-# Configure for live testing
-discovery.eps_effect = 2.0       # Effect must be > 2 speed/sec to be significant
-discovery.snr_threshold = 1.2    # SNR > 1.2 required
-discovery.alpha_max = 0.85       # MAX = 85% of full effect
-discovery.measure_duration_ms = 200  # Longer measurements for stability
-discovery.measure_reps = 4       # More reps for reliability
-```
-
-**Test Result Dataclass from `demo_test_harness.py`:**
-```python
-@dataclass
-class TestResult:
-    """Result of a single test"""
-    test_name: str
-    passed: bool
-    evidence: List[str] = field(default_factory=list)
-    data: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
-    duration: float = 0.0
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-```
-
-**Location:**
-- No dedicated fixtures directory
-- Test data embedded in test scripts
-- Configuration in-script via constructor or method calls
-
-## Coverage
-
-**Requirements:** None enforced (no pytest.ini, setup.cfg found)
-
-**View Coverage:** Not applicable (no coverage tool configured)
-
-**Observation:** Tests focus on end-to-end validation rather than unit test coverage metrics
-
-## Test Types
-
-**Unit Tests:**
-- Scope: Individual components in isolation (rarely used)
-- Approach: Manual instantiation and method calls
-- Example: `demo_test_harness.py` has individual test functions for each ticket
-
-**Integration Tests:**
-- Scope: Component interactions with real services
-- Approach: Live connection tests with actual TrackMania and FalkorDB
-- Examples:
-  - `test_sutton_live.py`: Tests discovery algorithm with live TrackMania
-  - `test_knowledge_live.py`: Tests knowledge recording with FalkorDB
-  - `live_system_validator.py`: Tests all modules together
-
-**E2E Tests:**
-- Framework: Manual scripts (not automated test framework)
-- Examples:
-  - `demo_test_harness.py`: Validates all tickets end-to-end
-  - `demo_meeting_requirements.py`: Verifies meeting requirements
-  - `live_system_validator.py`: Full system validation
-
-**Performance/Stress Tests:**
-- `stress_test_falkordb.py`: Database performance under load
-
-## Common Patterns
-
-**Connection Testing:**
-```python
-# From test_knowledge_live.py - Connection with fallback
-METHODS = {
-    'socket': {'port': 9000, 'type': 'tcp'},      # TMRL_GrabData
-    'http_8080': {'port': 8080, 'type': 'http'},  # GrabData HTTP
-    'http_29201': {'port': 29201, 'type': 'http'} # OpenPlanet API
-}
-
-connection = try_socket_connection()
-if connection is None:
-    connection = try_http_connection(8080)
-if connection is None:
-    connection = try_http_connection(29201)
-if connection is None:
-    print("[FAILED] Cannot connect to TrackMania")
-    return
-```
-
-**Async/Real-time Testing:**
-```python
-# From test_sutton_live.py - Sequential action/observation
-print("\n[2] Warm up car...")
-for _ in range(150):
-    adapter.send_action_dict({'gas': 1.0, 'brake': 0.0, 'steering': 0.0})
-    time.sleep(0.02)  # TrackMania runs at ~60fps
-
-fb = adapter.get_feedbacks()
-speed = fb.get('speed', 0)
-print(f"Speed after warmup: {speed:.1f}")
-```
-
-**State Validation:**
-```python
-# From live_system_validator.py - Persistent connection validation
-class LiveConnectionManager:
-    def __init__(self):
-        self.tm_socket = None
-        self.tm_connected = False
-        self._recv_thread = None
-        self._running = False
-        self._observation_queue = Queue(maxsize=100)
-        self._last_feedbacks = None
-        self._observations_received = 0
-        self._errors = 0
-```
-
-**Failure Detection Pattern:**
-```python
-# From test_sutton_live.py
-print("[OK] Connected")
-
-# Next test
-print(f"\n[3] Verifying telemetry...")
-fb = adapter.get_feedbacks()
-if 'pos_x' not in fb or 'pos_z' not in fb:
-    print("  [WARN] Position data not available - steering discovery may fail")
-```
-
-**Evidence Collection:**
-```python
-# From demo_test_harness.py - Test result structure
-@dataclass
-class TestResult:
-    test_name: str
-    passed: bool
-    evidence: List[str] = field(default_factory=list)  # Collect evidence
-    data: Dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
-    duration: float = 0.0
-
-# Usage in test
-result.evidence.append(f"Speed change: {speed_change:+.2f}")
-result.data['speed_before'] = speed_before
-result.data['speed_after'] = speed_after
-```
-
-## Test Execution Model
-
-**Sequential Phases:**
-1. **Initialization** - Connect to services, load configuration
-2. **Pre-test validation** - Verify preconditions (car on track, data available)
-3. **Warmup** - Prime the environment (accelerate car, etc.)
-4. **Test execution** - Run the actual test
-5. **Results collection** - Gather metrics and observations
-6. **Cleanup** - Release controls, close connections
-7. **Summary** - Print results and status
-
-**Early exit on failure:**
-```python
-if not adapter.connect(timeout=5.0):
-    print("  [FAIL] Could not connect")
-    return 1  # Exit immediately on critical failure
-```
-
-**Progress reporting:**
-```python
-for _ in range(150):
-    adapter.send_action_dict({'gas': 1.0, ...})
-    time.sleep(0.02)
-
-print(f"  Speed after warmup: {speed:.1f}")  # Verify progress
-```
-
-## Test Configuration
-
-**Configuration approach:**
-- Test-specific settings passed directly to components
-- Example from `test_sutton_live.py`:
-```python
-discovery = SuttonCompliantDiscovery(adapter, feedback_name='speed')
-discovery.eps_effect = 2.0       # Tunable thresholds
-discovery.snr_threshold = 1.2
-discovery.alpha_max = 0.85
-discovery.measure_duration_ms = 200
-discovery.measure_reps = 4
-```
-
-**Requirements documentation:**
-Every test file documents its requirements in the module docstring:
-```python
-"""
-LIVE TEST: Sutton-Compliant Bin Discovery
-
-REQUIREMENTS:
-- TrackMania running with TMRL_GrabData plugin
-- Car on track (can be moving - NO STATE RESET)
-- vgamepad/ViGEmBus installed
-"""
-```
-
-**No test configuration files:**
-- No pytest.ini, setup.cfg, tox.ini found
-- Tests are self-contained executable scripts
-- Configuration is code-driven, not file-driven
-
-## Observation Patterns
-
-**Real-time observation from `test_knowledge_live.py`:**
-```python
-# Continuous sampling loop
-while time.time() - start_time < duration:
-    # Get current state
-    feedbacks = get_feedbacks()
-    if feedbacks is None:
-        continue
-
-    # Send action
-    send_action(1.0, 0.0, 0.0)
-
-    # Record
-    recorder.record(feedbacks, action)
-
-    # Progress
-    frame = recorder.get_frame_count()
-    if frame % 10 == 0:
-        print(f"  Frame {frame}: speed={feedbacks['speed']:.2f}")
-
-    time.sleep(0.05)  # Sample at ~20Hz
-```
-
-**Structured result validation from `demo_test_harness.py`:**
-```python
-if frames_count > 0 and transitions_count > 0:
-    print(f"[OK] {frames_count} frame nodes stored")
-    print(f"[OK] {transitions_count} transitions with gas/brake/steering")
-    print("[OK] Actual values stored (not discretized)")
-    print("\nSUCCESS: Knowledge Graph V2 working correctly!")
-else:
-    print("[FAILED] No data stored")
-```
+**Assertion Style:**
+- Direct `assert` statements with optional message:
+  ```python
+  assert a_max is not None, "Max should be discovered"
+  assert abs(a_min - 0.1) < 0.01, f"Min should be ~0.1, got {a_min}"
+  ```
+- Comparison assertions for ranges:
+  ```python
+  assert bins[0].label == 'DEAD_ZONE', "First bin should be dead-zone"
+  assert len(bins) == 11, f"Should be 11 bins, got {len(bins)}"
+  ```
 
 ---
 
-*Testing analysis: 2026-01-31*
+*Testing analysis: 2026-02-16*

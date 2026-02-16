@@ -1,284 +1,330 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-01-31
+**Analysis Date:** 2026-02-16
 
 ## Directory Layout
 
 ```
-project-root/
-├── config/                    # Configuration files
-│   ├── system_config_corrected.json    # Primary system config (actions, feedbacks, timing, bins)
-│   └── __init__.py
-├── core/                      # Layer 1: BRAIN CAPACITY - What system CAN do
-│   ├── brain_core.py          # BrainArchitecture, DisjointActionValidator, ActionDiscretizer
-│   ├── brain_capacity.py      # Atomic capacity functions (sensory, motor, knowledge)
-│   ├── state_manager.py       # StateVector, StateManager (current position in all graphs)
-│   └── __init__.py
-├── control/                   # CONTROL LAYER - Orchestration and coordination
-│   ├── system_coordinator_corrected.py    # Main coordinator (reads feedback → decision → action)
-│   ├── system_initializer.py  # Initialization sequence (validation → experimentation → ready)
-│   ├── goal_orchestrator.py   # Goal definitions (OPEN_ENDED, CLOSED_ENDED)
-│   ├── episode_controller.py  # Episode lifecycle (frames, failure detection, stuck detection)
-│   ├── frame_action_controller.py         # Control loop (send action, read feedback per iteration)
-│   ├── environment_protocol.py            # EnvironmentBridge (abstraction for env communication)
-│   ├── environment_timing.py  # Frame timing and synchronization
-│   ├── timestamp_manager_corrected.py     # Frame clock vs wall clock management
-│   └── __init__.py
-├── intelligence/              # Layer 3: INTELLIGENCE - How system USES capacity + knowledge
-│   ├── brain_intelligence.py  # Supervisor intelligence (meta-reasoning)
-│   ├── intelligence_awareness.py          # Awareness: knowledge vs reality comparison
-│   ├── intelligence_experimentation.py    # Bin discovery via order-of-magnitude search
-│   ├── intelligence_explore.py            # Exploration: try untried actions
-│   ├── intelligence_repeat.py             # Episode replay: recreate exact transitions
-│   ├── intelligence_monitor.py            # Range monitoring: constraint checking
-│   ├── intelligence_future_constraints.py # Prediction: will action violate constraints?
-│   ├── order_discovery.py     # Core algorithm for min/max discovery (Sutton-compliant)
-│   └── __init__.py
-├── knowledge/                 # Layer 2: KNOWLEDGE - What system KNOWS (passive storage)
-│   ├── knowledge_manager.py   # Per-frame knowledge graphs (FalkorDB-backed)
-│   ├── memory_handler.py      # Short-term memory (recent episodes) + long-term (FalkorDB)
-│   └── __init__.py
-├── adapters/                  # Layer 4: ENVIRONMENT - Environment-specific code (isolated)
-│   ├── tmrl_adapter.py        # TrackMania/TMRL data extraction (EnvironmentAdapter interface)
-│   ├── tmrl_live_adapter.py   # Live TCP/socket communication with TrackMania
-│   ├── live_validation.py     # Validation for live mode
-│   └── __init__.py
-├── utils/                     # Utilities and exceptions
-│   ├── exceptions.py          # SystemException, ConfigurationError, etc.
-│   ├── validators.py          # ConfigValidator, InputValidator
-│   └── [other utilities]
-├── tests/                     # Test suite
-│   ├── [test files]
-├── docs/                      # Documentation
+tmrl_docker_trainer/
+├── core/                          # Layer 1: Brain Capacity
+│   ├── __init__.py
+│   ├── brain_core.py              # Main orchestrator (1178 lines)
+│   ├── brain_capacity.py           # Action discretization, disjoint validation
+│   └── state_manager.py            # StateVector, state tracking
+│
+├── knowledge/                      # Layer 2: Knowledge Graphs
+│   ├── __init__.py
+│   ├── knowledge_manager.py        # Per-frame knowledge graph (1010 lines)
+│   └── memory_handler.py           # Short-term memory
+│
+├── intelligence/                   # Layer 3: Intelligence Modules
+│   ├── __init__.py
+│   ├── brain_intelligence.py       # Base intelligence class
+│   ├── intelligence_awareness.py   # Awareness intelligence
+│   ├── intelligence_experimentation.py   # Experimentation (1544 lines)
+│   ├── intelligence_explore.py     # Exploration intelligence
+│   ├── intelligence_repeat.py      # Repeat intelligence
+│   ├── intelligence_monitor.py     # Range monitoring
+│   ├── intelligence_future_constraints.py  # Constraint prediction
+│   └── order_discovery.py          # Bin acquisition (paired nudges)
+│
+├── control/                        # Layer 4: System Orchestration
+│   ├── __init__.py
+│   ├── system_coordinator_corrected.py  # Main decision loop (1043 lines)
+│   ├── goal_orchestrator.py        # Goal management
+│   ├── episode_controller.py       # Episode lifecycle
+│   ├── frame_action_controller.py  # Control loop cadence
+│   ├── environment_protocol.py     # Environment bridge
+│   ├── environment_timing.py       # Timing management
+│   ├── timestamp_manager_corrected.py  # Time tracking
+│   └── system_initializer.py       # Startup sequence
+│
+├── adapters/                       # Environment-Specific Code
+│   ├── __init__.py
+│   ├── tmrl_adapter.py             # TrackMania/TMRL adapter
+│   ├── tmrl_live_adapter.py        # Live TrackMania adapter
+│   └── live_validation.py          # Validation for live mode
+│
+├── utils/                          # Utilities
+│   ├── __init__.py
+│   ├── exceptions.py               # Exception hierarchy
+│   └── validators.py               # Configuration validators
+│
+├── config/                         # Configuration Files
+│   ├── __init__.py
+│   ├── system_config_corrected.json    # Main system configuration
+│   ├── server_config.json          # Server configuration
+│   └── trainer_config.json         # Trainer configuration
+│
+├── tests/                          # Tests & Checkpoints
+│   ├── checkpoint_*.py             # Checkpoint validation tests
+│   └── ...
+│
+├── docs/                           # Documentation
 │   ├── SYSTEM_DOCUMENTATION.md
-│   ├── meeting_requirements.md
-│   └── [design documents]
-├── archive/                   # Historical and reference materials
-│   ├── meeting_transcripts/   # Dr. Richard Sutton's meeting transcripts (ground truth)
-│   ├── new_meeing_transcripts/# Latest transcripts (31-Jan-2026)
-│   └── [docker files, old code]
-├── checkpoints/               # Model checkpoints and saved states
-├── logs/                      # Runtime logs and traces
-├── knowledge/                 # Knowledge graph backups (complementary to FalkorDB)
-├── ui/                        # Optional: UI explorer
-├── weights/                   # Neural network weights (if applicable)
-└── [entry point scripts]      # See "Entry Points" below
+│   ├── AUDIT_REPORT.md
+│   ├── system_architecture.md
+│   ├── DEMO_HARNESS_RUNBOOK.md
+│   └── ...
+│
+├── intelligence/                   # Analysis scripts
+├── knowledge/                      # Knowledge/data output
+├── logs/                           # Execution logs
+├── checkpoints/                    # Saved checkpoints
+├── weights/                        # Model weights
+├── archive/                        # Previous versions
+│
+├── __init__.py                     # Package initialization
+├── run_initialization.py           # Entry point: System initialization
+├── tmrl_live_control.py            # Entry point: Live training
+├── run_order_system.py             # Entry point: Bin discovery
+├── run_order_system_standalone.py  # Standalone bin discovery
+├── demo_test_harness.py            # Entry point: Test harness
+├── demo_meeting_requirements.py    # Requirements verification
+└── discover_v*.py                  # Discovery algorithm variants
 ```
 
 ## Directory Purposes
 
-**`config/`**
-- Purpose: System configuration (prior knowledge from human)
-- Contains: `system_config_corrected.json` with action ranges, feedback definitions, disjoint rules, experimentation config, environment timing
-- CRITICAL: Frame timing must match environment FPS (e.g., 50ms for TMRL's 20Hz)
-- Mutability: Read-only at runtime (except for acquired bins stored separately)
-
-**`core/`**
-- Purpose: Brain capacity layer (what system CAN do)
-- `brain_core.py`: Facade providing all capacities (sense, act, discretize, query, connect)
-- `brain_capacity.py`: Individual capacity implementations (sensory, motor, knowledge, connection)
-- `state_manager.py`: Tracks "where am I?" across all knowledge graphs
-- Key exports: `BrainArchitecture`, `StateVector`, `StateManager`, `DisjointActionValidator`, `ActionDiscretizer`
-
-**`control/`**
-- Purpose: System orchestration and episode management
-- Main flow:
-  1. `system_initializer.py`: One-time startup (validation + experimentation)
-  2. `system_coordinator_corrected.py`: Episode loop (feedback → decision → action)
-  3. `goal_orchestrator.py`: What are we trying to achieve?
-  4. `episode_controller.py`: When does episode end?
-  5. `frame_action_controller.py`: Per-frame action dispatch
-  6. `environment_protocol.py`: How to talk to environment?
-  7. `environment_timing.py`: Frame synchronization
-- Key exports: `SystemCoordinator`, `SystemInitializer`, `EpisodeController`, `FrameActionController`, `GoalOrchestrator`
-
-**`intelligence/`**
-- Purpose: Decision-making modules (how to USE capacity + knowledge)
-- Pattern: Each module answers ONE question
-  - `intelligence_awareness.py`: "Does knowledge match reality?"
-  - `intelligence_explore.py`: "What actions haven't I tried?"
-  - `intelligence_experimentation.py`: "What are the min/max values for each action?"
-  - `intelligence_repeat.py`: "Can I recreate this episode exactly?"
-  - `intelligence_monitor.py`: "Are we within safe ranges?"
-  - `intelligence_future_constraints.py`: "Will this action violate constraints?"
-  - `brain_intelligence.py`: Meta-reasoning (supervisor level)
-- Key exports: All Intelligence classes ending in `Intelligence`
-
-**`knowledge/`**
-- Purpose: Storage layer (what system KNOWS)
-- `knowledge_manager.py`: Per-frame graphs in FalkorDB (structure: one node per frame, edges with actions)
-- `memory_handler.py`: Short-term memory (dictionaries, deques) + long-term memory (FalkorDB)
-- Data: Transitions, state vectors, discovered bins, episode recordings
-- Key exports: `KnowledgeManager`, `MemoryHandler`, `EpisodeMemory`
-
-**`adapters/`**
-- Purpose: Environment-specific code (ISOLATED from system logic)
-- `tmrl_adapter.py`: TrackMania data extraction (implements `EnvironmentAdapter` interface)
-- `tmrl_live_adapter.py`: Live TCP socket communication
-- `live_validation.py`: Validation helpers
-- Key pattern: Abstract `EnvironmentAdapter` interface allows ANY environment to plug in
-- Key exports: `EnvironmentAdapter`, `TMRLAdapter`, `GenericEnvironmentAdapter`
-
-**`utils/`**
-- Purpose: Cross-cutting utilities
-- `exceptions.py`: Exception hierarchy (SystemException, ConfigurationError, etc.)
-- `validators.py`: Schema validation (ConfigValidator) and input validation (InputValidator)
-- Used by: All layers for validation and error handling
-
-**`tests/`**
-- Purpose: Automated testing
-- Patterns: Unit tests, integration tests, system tests
-- Key files: Test harnesses for bin discovery, state management, intelligence modules
-
-**`docs/`**
-- Purpose: Design documentation
+**core/:**
+- Purpose: Brain Capacity - system capabilities (what the system CAN do)
+- Contains: Action discretization, state representation, capacity queries
 - Key files:
-  - `SYSTEM_DOCUMENTATION.md`: Overall system design
-  - `meeting_requirements.md`: Requirements from supervisor transcripts
-  - `system_architecture.md`: Detailed architecture diagrams
+  - `brain_core.py`: Main orchestrator, aggregates capacity components
+  - `brain_capacity.py`: Action bins, disjoint rules, combination validation
+  - `state_manager.py`: StateVector (node positions across graphs)
 
-**`archive/`**
-- Purpose: Historical reference and ground truth
-- `meeting_transcripts/`: Dr. Sutton's meeting transcripts (AUTHORITATIVE SOURCE)
-  - `latest_meeting_transcript.txt`
-  - `meeting_transcript_24Jan2026.txt`
-  - `all_meeting_transcripts.txt`
-- `new_meeing_transcripts/`: Latest meetings (31-Jan-2026)
-  - `meeting_transcript_31Jan2026.txt`
-- Used by: When understanding system design decisions, trace back to transcript
+**knowledge/:**
+- Purpose: Knowledge Graphs - what the system KNOWS (per-frame observations)
+- Contains: FalkorDB graph management, frame/transition storage
+- Key concept: One node PER FRAME (not discretized), actual observed values
+- Database: FalkorDB (Redis-based graph database)
+
+**intelligence/:**
+- Purpose: Intelligence Modules - reasoning about actions
+- Contains: Specialized decision-making modules (awareness, exploration, experimentation, etc.)
+- Pattern: Each module implements specific reasoning capability
+- Modules can be combined via Goal Orchestrator
+
+**control/:**
+- Purpose: System Orchestration - coordinates all layers
+- Contains: Main decision loop, goal management, episode management, environment bridge
+- Key file: `system_coordinator_corrected.py` - the MAIN LOOP
+
+**adapters/:**
+- Purpose: Environment-specific code isolation
+- Contains: TrackMania/TMRL data extraction, action formatting
+- Design: Abstract EnvironmentAdapter interface with concrete implementations
+- Principle: Core system is environment-agnostic, adapters handle specifics
+
+**utils/:**
+- Purpose: Shared utilities and infrastructure
+- Contains: Custom exceptions, input validators, configuration helpers
+
+**config/:**
+- Purpose: System configuration (not code)
+- Files:
+  - `system_config_corrected.json`: Actions, feedbacks, bins, constraints, rules
+  - `server_config.json`: Server/networking configuration
+  - `trainer_config.json`: Training-specific settings
+
+**tests/:**
+- Purpose: Verification and validation
+- Pattern: Checkpoint tests verify system behavior
+- Files: `checkpoint_*.py` - test scenarios and validation
+
+**docs/:**
+- Purpose: Documentation and specifications
+- Contains: Architecture docs, implementation guides, runbooks, audit reports
 
 ## Key File Locations
 
 **Entry Points:**
-- `run_initialization.py`: Initialize system (validation + experimentation)
-- `run_order_system.py`: Run episode execution system
-- `tmrl_live_control.py`: Live control demo
-- `demo_test_harness.py`: Test harness for demonstrations
-- `demo_meeting_requirements.py`: Verification that requirements are met
+
+- `run_initialization.py`: Main startup - checks prior knowledge, runs bin discovery, initializes system
+- `tmrl_live_control.py`: Live training with TrackMania environment
+- `run_order_system.py`: Standalone bin discovery (OrderDiscovery algorithm)
+- `run_order_system_standalone.py`: Alternative standalone bin discovery
+- `demo_test_harness.py`: Test and verification harness
+- `demo_meeting_requirements.py`: Verify meeting requirements compliance
 
 **Configuration:**
-- `config/system_config_corrected.json`: All system parameters (actions, feedbacks, timing, bins, experimentation)
+
+- `config/system_config_corrected.json`: Main configuration (actions, feedbacks, bins, constraints)
+  - Actions: gas, brake, steering (with bins and disjoint rules)
+  - Feedbacks: speed, lidar_0...lidar_18, etc.
+  - Constraints: Min/max ranges for each feedback
+  - Disjoint rules: gas disjoint brake (cannot both be active)
 
 **Core Logic:**
-- `core/brain_core.py`: BrainArchitecture (all capacities)
-- `core/state_manager.py`: State tracking
-- `control/system_coordinator_corrected.py`: Main episode loop
-- `knowledge/knowledge_manager.py`: Knowledge graphs (FalkorDB)
 
-**Testing & Validation:**
-- `tests/`: Test suite
-- `intelligence/order_discovery.py`: Core bin discovery algorithm
-- `control/system_initializer.py`: Initialization with validation
+- `control/system_coordinator_corrected.py`: Main decision loop (1043 lines)
+  - `make_decision()`: Per-frame decision cycle
+  - Integrates all four layers
+  - Returns DecisionPackage with action and reasoning
 
-**Intelligence Decisions:**
-- `intelligence/intelligence_awareness.py`: Knowledge vs reality
-- `intelligence/intelligence_explore.py`: Untried actions
-- `intelligence/intelligence_experimentation.py`: Bin discovery
-- `intelligence/intelligence_repeat.py`: Episode replay
-- `intelligence/intelligence_future_constraints.py`: Constraint prediction
+- `control/goal_orchestrator.py`: Goal management
+  - Open-ended goals (time/episode-based)
+  - Closed-ended goals (state-based)
+  - Goal priority and scheduling
+
+- `core/brain_core.py`: Capacity orchestrator (1178 lines)
+  - `BrainArchitecture` class
+  - Aggregates all capacity components
+  - Manages action discretization and validation
+
+- `knowledge/knowledge_manager.py`: Knowledge graph (1010 lines)
+  - Per-frame node creation
+  - Transition edge recording
+  - FalkorDB interface
+
+**Intelligence Modules:**
+
+- `intelligence/intelligence_awareness.py`: Compares predicted vs actual state
+- `intelligence/intelligence_experimentation.py`: Discovers action effects (1544 lines)
+- `intelligence/intelligence_explore.py`: Systematic exploration
+- `intelligence/intelligence_repeat.py`: Replay successful episodes
+- `intelligence/order_discovery.py`: Bin acquisition (paired nudges)
+
+**Testing & Verification:**
+
+- `tests/checkpoint_*.py`: Checkpoint validation tests
+- `demo_test_harness.py`: Comprehensive test harness
+- `diagnose_telemetry.py`: Telemetry diagnostics
 
 ## Naming Conventions
 
 **Files:**
-- `system_coordinator_corrected.py`: "corrected" indicates supervisor-approved version
-- `timestamp_manager_corrected.py`: "corrected" indicates version addressing timing issues
-- `brain_*.py`: Core brain functions (capacity, intelligence)
-- `intelligence_*.py`: Intelligence modules (each handles one type of reasoning)
-- `*_adapter.py`: Environment-specific adapters
+
+- Module files: `snake_case.py` (e.g., `system_coordinator_corrected.py`)
+- Test files: `checkpoint_*.py` or `test_*.py` (e.g., `checkpoint_brake.py`)
+- Configuration: `*_config.json` or `*_config_corrected.json`
+- Documentation: `UPPERCASE.md` (e.g., `SYSTEM_DOCUMENTATION.md`)
 
 **Directories:**
-- `core/`: Brain-level functionality (capacity)
-- `control/`: Orchestration and coordination
-- `intelligence/`: Decision-making (uses capacity + knowledge)
-- `knowledge/`: Storage and memory
-- `adapters/`: Environment-specific (isolated)
-- `utils/`: Cross-cutting utilities
-- `archive/`: Historical reference
+
+- Core modules: Lowercase (e.g., `core/`, `knowledge/`, `control/`)
+- Shared: `utils/`, `adapters/`, `config/`
+- Output: `logs/`, `checkpoints/`, `weights/`
+- Development: `archive/`, `tickets/`, `tools/`, `ui/`
 
 **Classes:**
-- `*Intelligence`: Intelligence modules (e.g., `AwarenessIntelligence`)
-- `*Manager`: Management classes (e.g., `KnowledgeManager`, `StateManager`)
-- `*Controller`: Control flow classes (e.g., `EpisodeController`, `FrameActionController`)
-- `*Validator`: Validation classes (e.g., `DisjointActionValidator`)
-- `*Adapter`: Environment adapters (e.g., `TMRLAdapter`)
 
-**Functions:**
-- `decide_*`: Intelligence decision functions (e.g., `decide_action()`)
-- `query_*`: Knowledge queries (e.g., `query_untried()`)
-- `sense_*`: Sensory capacities (e.g., `sense_speed()`)
-- `act_*`: Motor capacities (e.g., `act_gas()`)
-- `execute_*`: Control execution (e.g., `execute_action_for_iterations()`)
+- Pattern: PascalCase (e.g., `BrainArchitecture`, `StateManager`, `KnowledgeManager`)
+- Specialized: Descriptive names with layer context (e.g., `AwarenessIntelligence`, `ExperimentationIntelligence`)
+- Data classes: Descriptive ending in Result/Data (e.g., `AwarenessResult`, `StateVector`, `DecisionPackage`)
+
+**Functions/Methods:**
+
+- Pattern: snake_case (e.g., `make_decision()`, `record_transition()`, `is_valid_combination()`)
+- Query methods: `get_*()`, `query_*()` (e.g., `get_current_state()`)
+- Action methods: `execute_*()`, `perform_*()` (e.g., `execute_action()`)
+- Status checks: `is_*()`, `has_*()` (e.g., `is_episode_ended()`)
+
+**Variables/Constants:**
+
+- Local variables: snake_case (e.g., `current_state`, `action_values`)
+- Constants: UPPER_SNAKE_CASE (e.g., `DEFAULT_CONFIG_PATH`, `MAX_FRAMES`)
+- Private: Leading underscore (e.g., `_bin_lookup`, `_cache`)
 
 ## Where to Add New Code
 
-**New Intelligence Module (e.g., curiosity-driven exploration):**
-- Primary code: `intelligence/intelligence_<name>.py`
-  - Create class `<Name>Intelligence` inheriting from base pattern
-  - Implement `decide_action(feedbacks: Dict) -> Optional[Dict]`
-  - Use brain capacity queries: `brain.query_untried(state)`, `brain.query_transition(state, action)`
-- Integration: Import and register in `control/system_coordinator_corrected.py`
-- Tests: Add test file `tests/test_intelligence_<name>.py`
-- Config: Add config section in `config/system_config_corrected.json` if parameters needed
+**New Intelligence Module:**
+1. Create file in `intelligence/intelligence_*.py`
+2. Inherit from base intelligence interface
+3. Implement reasoning logic
+4. Register with GoalOrchestrator in `control/goal_orchestrator.py`
+5. Example:
+   - `intelligence/intelligence_awareness.py` - 60 lines for awareness reasoning
+   - Method: `perform_awareness_check()` returns AwarenessResult
+   - Used by: SystemCoordinator when active goal requires awareness
 
-**New Capacity Function (e.g., analyze energy efficiency):**
-- Primary code: `core/brain_capacity.py` → add method in `BrainCapacity` class
-- Registration: Add entry in `_register_all_capacities()` method
-- Export: Ensure callable from `BrainArchitecture` facade
-- Tests: Add test in `tests/test_brain_capacity.py`
+**New Capability (Brain Capacity Extension):**
+1. Add to `core/brain_capacity.py` or `core/brain_core.py`
+2. Expose through BrainArchitecture interface
+3. Add validation rules in validators
+4. Example:
+   - Add new action type: Update ActionDiscretizer in brain_capacity.py
+   - Add new constraint: Update constraint checking in goal_orchestrator.py
 
-**New Environment Support (e.g., racing simulator beyond TrackMania):**
-- Adapter code: `adapters/<env>_adapter.py`
-  - Implement `EnvironmentAdapter` abstract interface
-  - Methods: `extract_feedbacks()`, `extract_actions()`, `get_frame()`, `format_action_for_env()`
-- Live variant: `adapters/<env>_live_adapter.py` for real-time control
-- Config: Add `environment` section in system config
-- No changes needed to core system logic (environment-agnostic design)
+**New Control/Orchestration Feature:**
+1. Add to `control/system_coordinator_corrected.py` or relevant control file
+2. Follow decision cycle pattern (query → process → decide)
+3. Example:
+   - New goal type: Add GoalType enum, Goal factory function in goal_orchestrator.py
+   - New episode termination condition: Add to EpisodeController.check_episode_status()
 
-**New Constraint Type (e.g., energy budget):**
-- Implementation: `intelligence/intelligence_future_constraints.py` → add `ConstraintType` enum
-- Factory: Add case in `ConstraintFactory.create()`
-- Usage: Goals can include these constraints: `StateConstraint(feedback_name='energy', min_value=0.0, max_value=100.0)`
+**New Environment Adapter:**
+1. Create file in `adapters/*.py`
+2. Inherit from EnvironmentAdapter abstract base
+3. Implement extract_feedbacks(), extract_actions(), format_action_for_env()
+4. Register in SystemCoordinator adapter selection
+5. Example: See `adapters/tmrl_adapter.py` for TrackMania implementation
 
-**New Test:**
-- Location: `tests/test_<component>.py`
-- Pattern: Use fixtures from test harness (`demo_test_harness.py`)
-- Example: Test frame action controller with mock environment
+**Configuration/Rules:**
+1. Add to `config/system_config_corrected.json`
+2. Update validators in `utils/validators.py`
+3. Reload config via SystemInitializer
+4. Example:
+   - New action: Add to "actions" section with bins and disjoint rules
+   - New feedback: Add to "feedbacks" section with description
+
+**Tests & Checkpoints:**
+1. Create in `tests/checkpoint_*.py` or `tests/test_*.py`
+2. Follow checkpoint pattern from existing tests
+3. Use demo_test_harness.py as integration runner
+4. Example: See `tests/checkpoint_brake.py` for pattern
 
 ## Special Directories
 
-**`checkpoints/`**
-- Purpose: Save/restore system state (agent weights, knowledge graph snapshots)
-- Generated: Yes (during training runs)
-- Committed: No (too large, regenerated)
-- Usage: Resume training from previous checkpoint
-
-**`logs/`**
-- Purpose: Runtime logs and traces
+**logs/:**
+- Purpose: Runtime execution logs
 - Generated: Yes (at runtime)
-- Committed: No (too large, regenerated)
-- Structure: `logs/<demo_name>/<YYYY-MM-DD>/` with session logs
+- Committed: No (.gitignore)
+- Structure: Subdirectories by date/demo
 
-**`knowledge/`**
-- Purpose: Backup knowledge graphs (complementary to FalkorDB)
-- Generated: Yes (during episode execution)
-- Committed: No (live data)
-- Format: JSON snapshots of graph structure
+**checkpoints/:**
+- Purpose: Saved system state snapshots
+- Generated: Yes (during training)
+- Committed: No (large files)
+- Format: Depends on persistence implementation
 
-**`weights/`**
-- Purpose: Neural network weights (if policy learning added)
-- Generated: Maybe (not currently used)
-- Committed: No (large, regenerated)
-- Format: PyTorch .pt or TensorFlow .pb
+**weights/:**
+- Purpose: Model weights (if any)
+- Generated: Yes (during training)
+- Committed: No
+- Note: Currently not used in this architecture
 
-**`archive/meeting_transcripts/`**
-- Purpose: **AUTHORITATIVE SOURCE** for system requirements
-- Generated: No (human-created from supervisor meetings)
-- Committed: Yes (critical reference)
-- Format: `.txt` files of meeting transcripts with timestamps
-- Usage: When understanding WHY system works a certain way, read the relevant transcript
+**config/**
+- Purpose: Configuration files (code & data)
+- Generated: Some (discovered bins)
+- Committed: Yes (core configs)
+- Example: `system_config_corrected.json` is committed
+
+**archive/**
+- Purpose: Previous versions, deprecated code
+- Generated: No (manual archival)
+- Committed: Yes
+- Note: Not part of active system
+
+**tickets/**
+- Purpose: Task tracking and specifications
+- Generated: Manual documentation
+- Committed: Yes
+- Subdirectories: backlog, in_progress, completed, spikes
+
+**docs/**
+- Purpose: System documentation
+- Generated: Manual + auto-generated specs
+- Committed: Yes
+- Key files: SYSTEM_DOCUMENTATION.md, AUDIT_REPORT.md, system_architecture.md
+
+**ui/**
+- Purpose: Visualization and UI tools
+- Generated: Manual creation
+- Committed: Yes (if checked in)
+- Example: `explorer/` subdirectory for exploration visualization
 
 ---
 
-*Structure analysis: 2026-01-31*
-*Design pattern: Four-layer CKI (Capacity-Knowledge-Intelligence) per Dr. Richard Sutton*
-*Ground truth source: archive/meeting_transcripts/ and archive/new_meeing_transcripts/*
+*Structure analysis: 2026-02-16*
