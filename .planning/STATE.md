@@ -1,6 +1,6 @@
 # Project State: Intelligent Agent Architecture
 
-**Last Updated:** 2026-02-22 after quick-1 refactor
+**Last Updated:** 2026-02-22 after quick-2 multi-frame probe system
 **Current Status:** Phase A COMPLETE (code refactored to match meeting spec) - Ready for Phase B
 
 ## Project Reference
@@ -48,6 +48,7 @@ See: `.planning/PROJECT.md` (updated 2026-02-16)
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 1 | Refactor algorithm code to match meeting spec exactly | 2026-02-22 | 3e19bba | [1-refactor-algorithm-code-to-match-meeting](./quick/1-refactor-algorithm-code-to-match-meeting/) |
+| 2 | Wire ACTION_PROBE_FRAMES into probe + multi-frame probe system | 2026-02-22 | 6afaf24 | [2-wire-action-probe-frames-into-probe-one-](./quick/2-wire-action-probe-frames-into-probe-one-/) |
 
 ## Next Action
 
@@ -110,5 +111,5 @@ All 6 transcriptions from Dr. Richard Sutton meetings:
 ---
 
 *State updated: 2026-02-22*
-*Phase A: COMPLETE AND VERIFIED (code refactored quick-1)*
+*Phase A: COMPLETE AND VERIFIED (multi-frame probes, action-specific frame counts)*
 *Next: Phase B (Auto-Startup Integration)*
