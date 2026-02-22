@@ -43,15 +43,11 @@ See: `.planning/PROJECT.md` (updated 2026-02-16)
 - `PHASE_A_COMPLETE.md` - Phase A completion summary
 - `PHASE_A_IMPLEMENTATION_SUMMARY.md` - Implementation details
 
-## Quick Tasks Completed
+### Quick Tasks Completed
 
-**Quick-1: Refactor Algorithm Code to Match Meeting Spec** (2026-02-22)
-- Restructured run_discovery() as single downward sweep (not "6-step")
-- Removed MEASURING_DELTA0 phase enum -- D0 is setup context
-- Simplified epsilon: single param on FrameBinDiscovery (not per-action dict)
-- Stripped excessive warmup/preflight from test script
-- All references now point to algorithm_spec_from_meetings.md
-- Summary: `.planning/quick/1-refactor-algorithm-code-to-match-meeting/1-SUMMARY.md`
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 1 | Refactor algorithm code to match meeting spec exactly | 2026-02-22 | 3e19bba | [1-refactor-algorithm-code-to-match-meeting](./quick/1-refactor-algorithm-code-to-match-meeting/) |
 
 ## Next Action
 
