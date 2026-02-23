@@ -1,7 +1,7 @@
 # Project State: Intelligent Agent Architecture
 
-**Last Updated:** 2026-02-22 after quick-2 multi-frame probe system
-**Current Status:** Phase A COMPLETE (code refactored to match meeting spec) - Ready for Phase B
+**Last Updated:** 2026-02-23 paused — Sutton revert + TMNF migration in progress
+**Current Status:** Phase A code being reverted to pure Sutton + migrating to TMNF (deterministic)
 
 ## Project Reference
 
@@ -19,7 +19,9 @@ See: `.planning/PROJECT.md` (updated 2026-02-16)
 | Requirements | DEFINED | 39 requirements extracted from 6 meeting transcriptions |
 | Roadmap | DEFINED | Phase A done, Phase B-G planned in ROADMAP.md |
 | Phase A: Bin Discovery | COMPLETE | 100% Sutton compliance, live TrackMania verified |
-| Phase B: Auto-Startup | NOT STARTED | Next phase to implement |
+| Sutton Revert | IN PROGRESS | Strip engineering workarounds, pure single-frame probes (code written, untested) |
+| TMNF Migration | BLOCKED ON USER | Adapter written, user must install TMNF + TMInterface |
+| Phase B: Auto-Startup | NOT STARTED | After Sutton revert + TMNF testing |
 
 ## Phase A: Completed Work
 
