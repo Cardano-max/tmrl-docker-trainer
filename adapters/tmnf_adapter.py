@@ -1,12 +1,12 @@
 """
 TMNF ADAPTER — TrackMania Nations Forever via TMInterface 2.x (TCP socket bridge)
 
-This adapter communicates with the SuttonBridge.as AngelScript plugin via TCP.
+This adapter communicates with the AgenticBridge.as AngelScript plugin via TCP.
 The plugin is loaded by TMInterface 2.x (ModLoader) and exposes a TCP socket
 that pauses the game on each physics tick until Python responds.
 
 REQUIRES:
-  - TMinterface/SuttonBridge.as installed in TMInterface Plugins folder
+  - TMinterface/AgenticBridge.as installed in TMInterface Plugins folder
   - TMNF running via TMInterface 2.x (ModLoader)
   - An active race (countdown finished or in progress)
 
@@ -217,7 +217,7 @@ def _parse_sim_state(state, race_time: int) -> Dict[str, float]:
 class _TMNFSocketClient:
     """
     Low-level TCP client. Runs in a background thread, reads messages from
-    the SuttonBridge.as plugin.
+    the AgenticBridge.as plugin.
 
     Synchronization:
       - tick_ready: set when SCRunStepSync arrives (main thread unblocks)
@@ -257,7 +257,7 @@ class _TMNFSocketClient:
     # ------------------------------------------------------------------
 
     def connect(self, timeout: float = 60.0) -> bool:
-        """Connect to SuttonBridge.as TCP server. Returns True on success."""
+        """Connect to AgenticBridge.as TCP server. Returns True on success."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
@@ -312,6 +312,8 @@ class _TMNFSocketClient:
             msg_type = self._read_int32()
             if msg_type == int(MessageType.SC_ON_CONNECT_SYNC):
                 logger.info("[TMNF] Handshake received (SCOnConnectSync)")
+                # Ack handshake — plugin WaitForResponse expects this
+                self._send_raw(struct.pack("i", int(MessageType.SC_ON_CONNECT_SYNC)))
             else:
                 logger.warning(f"[TMNF] Expected handshake (5), got {msg_type}")
 
@@ -394,7 +396,7 @@ class _TMNFSocketClient:
             length = self._read_int32()
             if length is None or length <= 0:
                 return None
-            data = self._sock.recv(length, socket.MSG_WAITALL)
+            data = self._recv_exact(length)
             return data
         except Exception as e:
             logger.error(f"[TMNF] CGetSimulationState error: {e}")
@@ -458,15 +460,25 @@ class _TMNFSocketClient:
             if self._sock and self._connected:
                 self._sock.sendall(data)
 
+    def _recv_exact(self, n: int) -> Optional[bytes]:
+        """Receive exactly n bytes (MSG_WAITALL not supported on Windows)."""
+        buf = b''
+        while len(buf) < n:
+            try:
+                chunk = self._sock.recv(n - len(buf))
+                if not chunk:
+                    return None
+                buf += chunk
+            except Exception:
+                return None
+        return buf
+
     def _read_int32(self) -> Optional[int]:
         """Read 4 bytes from socket, return int32. Returns None on error."""
-        try:
-            data = self._sock.recv(4, socket.MSG_WAITALL)
-            if not data or len(data) < 4:
-                return None
-            return struct.unpack("i", data)[0]
-        except Exception:
+        data = self._recv_exact(4)
+        if not data or len(data) < 4:
             return None
+        return struct.unpack("i", data)[0]
 
 
 # =============================================================================
@@ -479,7 +491,7 @@ class TMNFAdapter:
     via TMInterface 2.x AngelScript TCP bridge.
 
     Public API (same as old mmap-based adapter):
-      connect(port)          -> TCP connect to SuttonBridge.as plugin
+      connect(port)          -> TCP connect to AgenticBridge.as plugin
       get_feedbacks()        -> Dict[str, float] (speed, position, yaw, etc.)
       send_action_dict(a)    -> sends CSetInputState (binary gas/brake + analog steer)
       wait_one_tick()        -> advances game one 10ms physics tick
@@ -512,20 +524,20 @@ class TMNFAdapter:
 
     def connect(self, port: int = DEFAULT_PORT, timeout: float = 60.0) -> bool:
         """
-        Connect to SuttonBridge.as TCP plugin.
+        Connect to AgenticBridge.as TCP plugin.
 
         Blocks until connection is established or timeout expires.
         The game must be running with the plugin loaded and a race active.
 
         Args:
-            port:    TCP port (default 8476, matches SuttonBridge.as DEFAULT_PORT)
+            port:    TCP port (default 8476, matches AgenticBridge.as DEFAULT_PORT)
             timeout: Maximum seconds to wait for connection
 
         Returns:
             True if connected successfully, False on timeout.
         """
         logger.info(f"[TMNF_ADAPTER] Connecting to port {port}...")
-        logger.info("[TMNF_ADAPTER] Make sure TMNF is running with SuttonBridge.as plugin loaded")
+        logger.info("[TMNF_ADAPTER] Make sure TMNF is running with AgenticBridge.as plugin loaded")
 
         self._client = _TMNFSocketClient(host=HOST, port=port)
 

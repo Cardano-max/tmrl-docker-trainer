@@ -1,0 +1,203 @@
+{
+  "timestamp": "20260225_160812",
+  "environment": "TMNF",
+  "interface": "TMInterface 2.x (TCP bridge)",
+  "plugin": "AgenticBridge.as",
+  "tick_ms": 10,
+  "deterministic": true,
+  "rewind_mode": true,
+  "algorithm": "sutton_downward_sweep",
+  "input_facts": {
+    "gas": "binary (threshold >0.001)",
+    "brake": "binary (threshold >0.001)",
+    "steering": "analog -65536..+65536"
+  },
+  "results": {
+    "gas": {
+      "max": 0.0015625,
+      "min": 0.001,
+      "bins": 2,
+      "probes": 10,
+      "time": 0.2841453552246094,
+      "delta_max": 0.22965929860499834,
+      "delta_0": -0.06734998043348561,
+      "input_type": "binary",
+      "bin_details": [
+        {
+          "id": 0,
+          "min": 0.0,
+          "max": 0.001,
+          "label": "DEAD_ZONE"
+        },
+        {
+          "id": 1,
+          "min": 0.001,
+          "max": 1.0,
+          "label": "ON"
+        }
+      ]
+    },
+    "brake": {
+      "max": 0.0015625,
+      "min": 0.001,
+      "bins": 2,
+      "probes": 10,
+      "time": 0.24498319625854492,
+      "delta_max": -0.554690384965264,
+      "delta_0": -0.06869369847090745,
+      "input_type": "binary",
+      "bin_details": [
+        {
+          "id": 0,
+          "min": 0.0,
+          "max": 0.001,
+          "label": "DEAD_ZONE"
+        },
+        {
+          "id": 1,
+          "min": 0.001,
+          "max": 1.0,
+          "label": "ON"
+        }
+      ]
+    },
+    "steering": {
+      "max": 0.7662109375000001,
+      "min": 0.0038125,
+      "bins": 21,
+      "probes": 19,
+      "time": 1.4934401512145996,
+      "delta_max": -0.0011206760794822343,
+      "delta_0": 6.832138706169832e-08,
+      "input_type": "analog",
+      "bin_details": [
+        {
+          "id": -10,
+          "min": -0.7662109375000001,
+          "max": -0.6899710937500001,
+          "label": "LEFT_BIN_10"
+        },
+        {
+          "id": -9,
+          "min": -0.6899710937500001,
+          "max": -0.6137312500000001,
+          "label": "LEFT_BIN_9"
+        },
+        {
+          "id": -8,
+          "min": -0.6137312500000001,
+          "max": -0.53749140625,
+          "label": "LEFT_BIN_8"
+        },
+        {
+          "id": -7,
+          "min": -0.53749140625,
+          "max": -0.46125156250000005,
+          "label": "LEFT_BIN_7"
+        },
+        {
+          "id": -6,
+          "min": -0.46125156250000005,
+          "max": -0.38501171875000006,
+          "label": "LEFT_BIN_6"
+        },
+        {
+          "id": -5,
+          "min": -0.38501171875000006,
+          "max": -0.30877187500000003,
+          "label": "LEFT_BIN_5"
+        },
+        {
+          "id": -4,
+          "min": -0.30877187500000003,
+          "max": -0.23253203125000002,
+          "label": "LEFT_BIN_4"
+        },
+        {
+          "id": -3,
+          "min": -0.23253203125000002,
+          "max": -0.1562921875,
+          "label": "LEFT_BIN_3"
+        },
+        {
+          "id": -2,
+          "min": -0.1562921875,
+          "max": -0.08005234375,
+          "label": "LEFT_BIN_2"
+        },
+        {
+          "id": -1,
+          "min": -0.08005234375,
+          "max": -0.0038125,
+          "label": "LEFT_BIN_1"
+        },
+        {
+          "id": 0,
+          "min": -0.0038125,
+          "max": 0.0038125,
+          "label": "STRAIGHT"
+        },
+        {
+          "id": 1,
+          "min": 0.0038125,
+          "max": 0.08005234375,
+          "label": "RIGHT_BIN_1"
+        },
+        {
+          "id": 2,
+          "min": 0.08005234375,
+          "max": 0.1562921875,
+          "label": "RIGHT_BIN_2"
+        },
+        {
+          "id": 3,
+          "min": 0.1562921875,
+          "max": 0.23253203125000002,
+          "label": "RIGHT_BIN_3"
+        },
+        {
+          "id": 4,
+          "min": 0.23253203125000002,
+          "max": 0.30877187500000003,
+          "label": "RIGHT_BIN_4"
+        },
+        {
+          "id": 5,
+          "min": 0.30877187500000003,
+          "max": 0.38501171875000006,
+          "label": "RIGHT_BIN_5"
+        },
+        {
+          "id": 6,
+          "min": 0.38501171875000006,
+          "max": 0.46125156250000005,
+          "label": "RIGHT_BIN_6"
+        },
+        {
+          "id": 7,
+          "min": 0.46125156250000005,
+          "max": 0.53749140625,
+          "label": "RIGHT_BIN_7"
+        },
+        {
+          "id": 8,
+          "min": 0.53749140625,
+          "max": 0.6137312500000001,
+          "label": "RIGHT_BIN_8"
+        },
+        {
+          "id": 9,
+          "min": 0.6137312500000001,
+          "max": 0.6899710937500001,
+          "label": "RIGHT_BIN_9"
+        },
+        {
+          "id": 10,
+          "min": 0.6899710937500001,
+          "max": 0.7662109375000001,
+          "label": "RIGHT_BIN_10"
+        }
+      ]
+    }
+  }
+}

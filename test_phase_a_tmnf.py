@@ -22,8 +22,8 @@ This means:
 SETUP — REQUIRED BEFORE RUNNING:
   1. Install TMNF (free): https://trackmaniaforever.com/ or Steam
   2. Install TMInterface 2.x via ModLoader: https://donadigo.com/tminterface/
-  3. Copy TMinterface/SuttonBridge.as to:
-       %APPDATA%\\TMInterface\\Plugins\\SuttonBridge.as
+  3. Copy TMinterface/AgenticBridge.as to:
+       %APPDATA%\\TMInterface\\Plugins\\AgenticBridge.as
   4. Launch TMNF via TMInterface.exe
   5. Start a race on any track (wait for countdown to end)
   6. Run this script
@@ -120,20 +120,36 @@ def make_probe_fn(
     def probe_one_tick(value: float) -> 'ProbeResult':
         nonlocal probe_counter
 
-        if use_rewind:
-            # Rewind to saved state so each probe is independent
-            adapter.rewind()
-
-        # Read state BEFORE applying action
-        fb_before = adapter.get_feedbacks()
-
-        # Apply action for exactly one tick
+        # Build action
         action_dict = {n: 0.0 for n in TMNF_ACTIONS_CONFIG}
         clipped = max(action_range[0], min(value, action_range[1]))
         action_dict[action_name] = clipped
 
+        # TMInterface has a ONE-TICK INPUT DELAY:
+        # SetInputState during OnRunStep takes effect NEXT tick, not current.
+        #
+        # With rewind: rewind → send action → wait 1 tick (replayed inputs,
+        #   same for all probes → consistent fb_before) → send action →
+        #   wait N ticks (our input) → read fb_after.
+        #
+        # Steering: yaw change builds gradually, needs more ticks.
+        MEASURE_TICKS = 5 if action_name == 'steering' else 1
+
+        if use_rewind:
+            adapter.rewind()
+
+        # Tick 1: send our action (loads for next tick).
+        # With rewind, this tick uses replayed inputs (deterministic baseline).
         adapter.send_action_dict(action_dict)
         adapter.wait_one_tick()
+
+        # Read state — consistent baseline with rewind, current state without.
+        fb_before = adapter.get_feedbacks()
+
+        # Tick 2+: our input takes effect
+        for _ in range(MEASURE_TICKS):
+            adapter.send_action_dict(action_dict)
+            adapter.wait_one_tick()
 
         # Read state AFTER action
         fb_after = adapter.get_feedbacks()
@@ -207,10 +223,14 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
     intelligence = ExperimentationIntelligence(TMNF_ACTIONS_CONFIG, change_threshold=0.001)
     intelligence.start_time = time.time()
 
-    # With deterministic environment: no noise floor needed.
-    # Only need float precision epsilon for game's float output.
-    EPSILON_GAS_BRAKE = 1e-6    # Gas/brake are binary — any delta above this is real
-    EPSILON_STEERING  = 1e-5    # Steering yaw change precision
+    # With rewind: probes are deterministic (same starting state), so tight epsilon.
+    # Without rewind: sequential drift needs larger epsilon.
+    if use_rewind:
+        EPSILON_GAS_BRAKE = 0.01   # Deterministic — only float precision matters
+        EPSILON_STEERING  = 1e-5   # Yaw precision over 5 ticks
+    else:
+        EPSILON_GAS_BRAKE = 0.05   # Absorbs sequential speed drift (~0.01/tick)
+        EPSILON_STEERING  = 1e-4   # Wider for drift
 
     logger.info("=" * 70)
     logger.info("PHASE A BIN DISCOVERY — TMNF (Pure Sutton)")
@@ -230,10 +250,26 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
 
     results = {}
 
+    # Target speed for probing — need enough speed for all actions to show effect
+    TARGET_SPEED = 15.0  # km/h
+
     for action_name in actions_to_run:
         if action_name not in TMNF_ACTIONS_CONFIG:
             logger.warning(f"  Skipping unknown action: {action_name}")
             continue
+
+        # Re-accelerate before each action's discovery (sequential mode loses speed)
+        if not use_rewind:
+            fb = adapter.get_feedbacks()
+            speed = fb.get('speed', 0)
+            if speed < TARGET_SPEED:
+                logger.info(f"  Re-accelerating from {speed:.1f} to {TARGET_SPEED} km/h...")
+                while speed < TARGET_SPEED:
+                    adapter.send_action_dict({'gas': 1.0, 'brake': 0.0, 'steering': 0.0})
+                    adapter.wait_one_tick()
+                    fb = adapter.get_feedbacks()
+                    speed = fb.get('speed', 0)
+                logger.info(f"  Speed restored: {speed:.1f} km/h")
 
         config = TMNF_ACTIONS_CONFIG[action_name]
         action_range = tuple(config['range'])
@@ -356,7 +392,7 @@ def save_results(results: dict, use_rewind: bool) -> str:
         'timestamp':     timestamp,
         'environment':   'TMNF',
         'interface':     'TMInterface 2.x (TCP bridge)',
-        'plugin':        'SuttonBridge.as',
+        'plugin':        'AgenticBridge.as',
         'tick_ms':       10,
         'deterministic': True,
         'rewind_mode':   use_rewind,
@@ -398,7 +434,7 @@ Examples:
     parser.add_argument('--speed', type=float, default=1.0,
                         help='Game speed multiplier (default: 1.0)')
     parser.add_argument('--port', type=int, default=8476,
-                        help='TCP port for SuttonBridge.as plugin (default: 8476)')
+                        help='TCP port for AgenticBridge.as plugin (default: 8476)')
     parser.add_argument('--steering-only', action='store_true',
                         help='Only run steering discovery (skip gas/brake)')
     parser.add_argument('--actions', type=str, default=None,
@@ -424,8 +460,8 @@ Examples:
     print("  Prerequisites:")
     print("    1. TMNF installed (free game)")
     print("    2. TMInterface 2.x installed via ModLoader")
-    print("    3. SuttonBridge.as copied to TMInterface Plugins folder:")
-    print("         %APPDATA%\\TMInterface\\Plugins\\SuttonBridge.as")
+    print("    3. AgenticBridge.as copied to TMInterface Plugins folder:")
+    print("         %APPDATA%\\TMInterface\\Plugins\\AgenticBridge.as")
     print("    4. TMNF launched via TMInterface.exe")
     print("    5. A race is running (start any track)")
     print()
@@ -444,11 +480,11 @@ Examples:
     adapter = TMNFAdapter()
     if not adapter.connect(port=args.port, timeout=30.0):
         print()
-        print("ERROR: Could not connect to SuttonBridge.as plugin.")
+        print("ERROR: Could not connect to AgenticBridge.as plugin.")
         print()
         print("Troubleshooting:")
         print("  1. Is TMNF running via TMInterface.exe?")
-        print("  2. Is SuttonBridge.as in the Plugins folder?")
+        print("  2. Is AgenticBridge.as in the Plugins folder?")
         print(f"  3. Is port {args.port} correct?")
         print("     (Change with RegisterVariable custom_port in TMInterface console)")
         print()
@@ -469,7 +505,21 @@ Examples:
         logger.info(f"Game speed set to {args.speed}x")
 
     try:
-        # Neutral state (release all inputs)
+        # System initialization (Sutton section 9): get car moving
+        # "Speed starts at 100" — car must be moving before experimentation
+        MIN_PROBE_SPEED = 10.0  # km/h — moderate speed (grass has high friction)
+        fb = adapter.get_feedbacks()
+        speed = fb.get('speed', 0)
+        if speed < MIN_PROBE_SPEED:
+            logger.info(f"  System init: accelerating from {speed:.1f} to {MIN_PROBE_SPEED} km/h...")
+            while speed < MIN_PROBE_SPEED:
+                adapter.send_action_dict({'gas': 1.0, 'brake': 0.0, 'steering': 0.0})
+                adapter.wait_one_tick()
+                fb = adapter.get_feedbacks()
+                speed = fb.get('speed', 0)
+            logger.info(f"  System init complete: speed={speed:.1f} km/h")
+
+        # Release inputs before discovery
         adapter.send_action_dict({'gas': 0.0, 'brake': 0.0, 'steering': 0.0})
         adapter.wait_one_tick()
 

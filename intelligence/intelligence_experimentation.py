@@ -183,12 +183,14 @@ class FrameBinDiscovery:
         action_name: str,
         action_range: Tuple[float, float],
         search_precision: float = 0.001,
-        epsilon: float = 0.05
+        noise_epsilon: float = 0.05,
+        signal_epsilon: float = 1e-7
     ):
         self.action_name = action_name
         self.action_range = action_range
         self.search_precision = search_precision
-        self.epsilon = epsilon
+        self.noise_epsilon = noise_epsilon      # Measurement variance floor
+        self.signal_epsilon = signal_epsilon    # System's actual precision
 
         # Core results
         self.delta_0: Optional[float] = None      # Delta when action=0
@@ -279,31 +281,41 @@ class FrameBinDiscovery:
     def _deltas_are_same(self, d1: float, d2: float) -> bool:
         """Are two deltas effectively the same?
 
-        Uses epsilon set at construction time. For gas/brake (speed deltas),
-        a larger epsilon absorbs physics variation. For steering (heading
-        deltas in radians), the caller passes a smaller epsilon.
+        Uses noise_epsilon: the measurement method's variance floor.
+        D0 subtraction produces ±0.03 variance — any difference smaller
+        than noise_epsilon is indistinguishable from measurement noise.
         """
-        return abs(d1 - d2) < self.epsilon
+        return abs(d1 - d2) < self.noise_epsilon
 
     def _is_saturated(self, delta: float) -> bool:
         """Is this delta the same as the saturated (max) delta?
 
         Spec: "if you go beyond the max the delta won't change"
+        Uses noise_epsilon — comparing two noisy measurements.
         """
         if self.delta_max is None:
             return False
         return self._deltas_are_same(delta, self.delta_max)
 
     def _is_same_as_delta0(self, delta: float) -> bool:
-        """Is this delta the same as D0 (action=0)?
+        """Is this delta the same as the D0 (action=0) delta?
 
-        Spec (section 5C): "The car case requires comparing against what
-        action=0 produces." If delta == D0, the tested action had no
-        effect beyond what doing nothing does.
+        Spec: "when delta = same as action=0" the action has no effect.
+        Compares delta to D0 directly — no D0 subtraction needed.
         """
         if self.delta_0 is None:
-            return abs(delta) < self.epsilon
-        return self._deltas_are_same(delta, self.delta_0)
+            return abs(delta) < self.noise_epsilon
+        return abs(delta - self.delta_0) < self.noise_epsilon
+
+    def _is_real_signal(self, delta: float) -> bool:
+        """Did the system produce a real reading above float precision?
+
+        Uses signal_epsilon — the system's actual precision.
+        This catches the smallest value a 50ms frame produces.
+        Separate from noise: a reading can be real (> signal_epsilon)
+        but still lost in noise (< noise_epsilon).
+        """
+        return abs(delta) > self.signal_epsilon
 
     # -----------------------------------------------------------------
     # EXPONENTIAL SEQUENCE
@@ -346,9 +358,9 @@ class FrameBinDiscovery:
             Keep going. When delta == action=0: MIN bracket -> binary search.
             Store MIN, MAX.
 
-        D0 (action=0 delta) is probed first as context for physics environments
-        (section 5C: "The car case requires comparing against what action=0
-        produces"). This is setup, not a separate algorithm phase.
+        D0 (action=0) is probed first for logging/informational purposes.
+        Actual drift removal happens per-probe (the intelligence math):
+        each probe subtracts local D0 to isolate the pure action signal.
 
         No heuristics. No baseline subtraction. No magic decimals.
         Pure transition search. Action=0 is a real action.
@@ -404,6 +416,19 @@ class FrameBinDiscovery:
             if self.delta_max is None:
                 self.delta_max = delta
                 logger.info(f"    (saturated delta = {delta:.6f})")
+
+                # EARLY EXIT: if max action produces same delta as D0,
+                # this action has no detectable effect. Don't sweep further.
+                # Sutton: if doing the strongest action == doing nothing,
+                # the action is useless. No bracket search needed.
+                if self._is_same_as_delta0(delta):
+                    logger.warning(
+                        f"  Saturated delta ({delta:.6f}) same as D0 "
+                        f"({self.delta_0:.6f}) at first probe. "
+                        f"Action has no detectable effect — skipping sweep."
+                    )
+                    return None, None
+
                 prev_val = val
                 prev_delta = delta
                 continue
@@ -612,11 +637,13 @@ class FrameBinDiscovery:
             label='DEAD_ZONE', effect_delta=self.delta_0 or 0.0
         ))
 
-        # If MIN == MAX, single active bin
-        if a_min >= a_max:
+        # Binary detection: if MIN ≈ MAX (range < precision * 10),
+        # the input is binary (off/on). Return 2 bins: dead zone + on.
+        # For binary inputs, the ON bin covers [threshold, range_max].
+        if a_min >= a_max or (a_max - a_min) < self.search_precision * 10:
             bins.append(ActionBin(
-                bin_id=1, a_min=a_min, a_max=a_max,
-                label='BIN_1', effect_delta=self.delta_max or 0.0
+                bin_id=1, a_min=a_min, a_max=self.action_range[1],
+                label='ON', effect_delta=self.delta_max or 0.0
             ))
             return bins
 
@@ -788,27 +815,21 @@ class ExperimentationIntelligence:
 
     MAX_PROBE_RETRIES = 3          # Retries on invalid steering probe
 
-    # Default epsilon for delta comparison. Steering uses a smaller value
-    # because heading deltas (radians) are much smaller than speed deltas.
-    DEFAULT_EPSILON = 0.15
-    STEERING_EPSILON = 0.0001
-
-    # Multi-frame probe parameters.
-    # TrackMania's drivetrain needs ~6 game frames to fully engage.
-    # Single-frame probes give unreliable deltas (timing jitter, startup lag).
-    # We apply the action for PROBE_FRAMES, then measure the per-frame delta
-    # from the LAST two frames (steady-state, drivetrain fully engaged).
-    PROBE_FRAMES = 10              # Game frames per probe (action applied continuously)
-    SETTLE_FRAMES = 3              # Coast frames between probes (drivetrain disengages)
-    MIN_USABLE_SPEED = 8.0         # Re-accelerate if speed drops below this (km/h)
-
-    # Action-specific probe frame counts. Brake response is immediate (no
-    # drivetrain startup), and 10 frames of braking drops speed too much,
-    # making the last-frame delta measured at a much lower speed than D0.
-    # With 3 frames, the car stays near D0 speed so deltas are comparable.
-    ACTION_PROBE_FRAMES = {
-        'brake': 3,
-    }
+    # Two separate epsilons (noise vs signal):
+    #
+    # NOISE_EPSILON: measurement method's variance floor.
+    #   D0 subtraction produces ±0.03 km/h variance from inter-frame
+    #   speed differences. Any delta below this could be noise.
+    #   Used for: _deltas_are_same, _is_saturated, _is_same_as_delta0
+    #
+    # SIGNAL_EPSILON: system's actual precision (game float resolution).
+    #   The smallest real value a single 50ms frame can produce.
+    #   Used for: detecting if the system produced any reading at all.
+    #
+    DEFAULT_NOISE_EPSILON = 0.05    # Speed (km/h) — above ±0.03 variance
+    DEFAULT_SIGNAL_EPSILON = 1e-7   # Speed (km/h) — game float precision
+    STEERING_NOISE_EPSILON = 0.002  # Heading (radians) — smaller scale
+    STEERING_SIGNAL_EPSILON = 1e-6  # Heading (radians) — float precision
 
     def run_discovery_for_action(
         self,
@@ -827,19 +848,24 @@ class ExperimentationIntelligence:
         Find MIN bracket (delta becomes same as action=0), binary search it.
         Store MIN, MAX.
 
-        Each probe applies the action for PROBE_FRAMES game frames and
-        measures the steady-state per-frame delta from the last two frames.
-        This overcomes drivetrain startup (~6 frames) and timing jitter.
+        Each probe = one frame = one answer (section 1, section 13).
         Pure: STATE_t --(ACTION per frame)--> STATE_t+1
         """
         config = self.actions_config[action_name]
         action_range = (config['range'][0], config['range'][1])
         is_bidir = config['range'][0] < 0
 
-        # Steering uses smaller epsilon because heading deltas are in radians
-        action_epsilon = self.STEERING_EPSILON if action_name == 'steering' else self.DEFAULT_EPSILON
+        # Two epsilons per measurement scale:
+        # noise = method variance floor, signal = system precision
+        if action_name == 'steering':
+            noise_eps = self.STEERING_NOISE_EPSILON
+            signal_eps = self.STEERING_SIGNAL_EPSILON
+        else:
+            noise_eps = self.DEFAULT_NOISE_EPSILON
+            signal_eps = self.DEFAULT_SIGNAL_EPSILON
 
-        disc = FrameBinDiscovery(action_name, action_range, self.search_precision, epsilon=action_epsilon)
+        disc = FrameBinDiscovery(action_name, action_range, self.search_precision,
+                                 noise_epsilon=noise_eps, signal_epsilon=signal_eps)
         result = ActionDiscoveryResult(action_name=action_name)
         t0 = time.time()
 
@@ -849,81 +875,73 @@ class ExperimentationIntelligence:
             a[action_name] = max(action_range[0], min(value, action_range[1]))
             return a
 
-        # Action-specific probe frame count. Brake is immediate (no drivetrain
-        # startup), and 10 frames drops speed too much — use 3 instead.
-        probe_frames = self.ACTION_PROBE_FRAMES.get(action_name, self.PROBE_FRAMES)
-
-        # Target speed for speed recovery between probes.
-        # Set from the D0 probe's fb_before — all subsequent probes
-        # recover to this speed so deltas are measured at consistent state.
-        probe_target_speed = [None]
+        # Neutral action for D0 measurement
+        neutral = {name: 0.0 for name in self.actions_config}
 
         def probe_one_frame(value: float) -> ProbeResult:
-            """Execute one probe using multi-frame steady-state measurement.
+            """Two frames per probe: measure physics, then measure action.
 
-            TrackMania's drivetrain needs ~6 game frames to fully engage.
-            Single-frame probes give unreliable deltas (timing jitter,
-            drivetrain startup lag). Instead:
+            Frame 1: action=0 → D0_local (what physics does HERE)
+            Frame 2: action=X → delta_raw (action + physics)
+            signal = delta_raw - D0_local (pure action contribution)
 
-                1. Apply action for PROBE_FRAMES consecutive game frames
-                2. Read state at frames N-2 (pre), N-1 (before), N (after)
-                3. delta = state_after - state_before (steady-state per-frame)
-                4. Coast SETTLE_FRAMES to disengage drivetrain
-                5. Recover speed to D0 operating point (consistent state)
+            This removes inherited momentum/drag from previous probes.
+            From rest: D0_local=0 at first probe, grows as car gains speed.
+            At speed: D0_local captures current drag. Either way, the
+            subtraction isolates what the action itself contributed.
 
-            This measures the STEADY-STATE per-frame transition — exactly
-            what Sutton means by "STATE_t --(ACTION per frame)--> STATE_t+1".
-            The first frames absorb drivetrain startup and timing jitter.
-            Speed recovery ensures all deltas are comparable to D0.
+            Two epsilons: noise_epsilon (0.05) filters measurement variance,
+            signal_epsilon (1e-7) catches the smallest real system reading.
             """
             for attempt in range(self.MAX_PROBE_RETRIES):
                 clamped = max(action_range[0], min(value, action_range[1]))
                 action_dict = make_action(clamped)
 
-                fb_pre = None
-                fb_before = None
+                # Frame 1: action=0 — measure what physics does HERE
+                fb_pre = get_feedbacks_fn()
+                send_action_fn(neutral)
+                wait_fn(frame_duration_s)
+                fb_before = get_feedbacks_fn()
 
-                # Apply action for probe_frames consecutive game frames.
-                # Read state at last 3 frames for delta computation.
-                for i in range(probe_frames):
-                    send_action_fn(action_dict)
-                    wait_fn(frame_duration_s)
-
-                    if i == probe_frames - 3:
-                        fb_pre = get_feedbacks_fn()
-                    elif i == probe_frames - 2:
-                        fb_before = get_feedbacks_fn()
-
-                fb_after = get_feedbacks_fn()
-
-                # Release action and settle (let drivetrain disengage)
-                neutral = {name: 0.0 for name in self.actions_config}
-                for _ in range(self.SETTLE_FRAMES):
-                    send_action_fn(neutral)
-                    wait_fn(frame_duration_s)
-
-                delta = disc.compute_delta(
-                    fb_before, fb_after,
+                # D0_local: speed change (or heading change) from doing nothing
+                d0_local = disc.compute_delta(
+                    fb_pre, fb_before,
                     action_name=action_name,
-                    pre_before=fb_pre
+                    pre_before=None
                 )
 
-                if delta is not None:
-                    break  # Valid probe
+                # Frame 2: action=X — measure what the action does HERE
+                send_action_fn(action_dict)
+                wait_fn(frame_duration_s)
+                fb_after = get_feedbacks_fn()
+
+                # delta_raw: speed change (or heading change) from the action
+                delta_raw = disc.compute_delta(
+                    fb_before, fb_after,
+                    action_name=action_name,
+                    pre_before=fb_pre  # Steering needs this for heading
+                )
+
+                if delta_raw is not None:
+                    # Subtract local physics to isolate action's contribution
+                    delta = delta_raw - (d0_local or 0.0)
+                    break
+                else:
+                    delta = None
+
                 if attempt < self.MAX_PROBE_RETRIES - 1:
                     logger.warning(f"    Probe invalid (low displacement), "
                                    f"retry {attempt+2}/{self.MAX_PROBE_RETRIES}")
 
-            # Determine validity — NEVER inject fake delta
+            # Determine validity
             is_valid = delta is not None
             if not is_valid:
                 logger.warning(f"    Probe INVALID after {self.MAX_PROBE_RETRIES} attempts. "
-                               f"Marking valid=False (not injecting fake data).")
-                delta = 0.0  # Placeholder for dataclass, but valid=False excludes it
+                               f"Marking valid=False.")
+                delta = 0.0  # Placeholder, valid=False excludes it
 
-            # Log epsilon on first probe
             if self.total_experiments == 0 or result.experiments_run == 0:
-                logger.info(f"  Epsilon: {disc.epsilon} ({action_name})")
+                logger.info(f"  Epsilon: noise={disc.noise_epsilon}, signal={disc.signal_epsilon} ({action_name})")
 
             self.total_experiments += 1
             result.experiments_run += 1
@@ -934,7 +952,7 @@ class ExperimentationIntelligence:
                 feedback_before=fb_before.copy(),
                 feedback_after=fb_after.copy(),
                 frame_duration_s=frame_duration_s,
-                feedback_pre_before=fb_pre.copy(),
+                feedback_pre_before=fb_pre.copy() if fb_pre else None,
                 valid=is_valid
             )
             disc.probes.append(pr)
@@ -944,54 +962,8 @@ class ExperimentationIntelligence:
                 'delta': delta,
                 'valid': is_valid,
                 'speed_before': fb_before.get('speed', 0),
-                'speed_after': fb_after.get('speed', 0)
+                'speed_after': fb_after.get('speed', 0),
             })
-
-            # -------------------------------------------------------
-            # SPEED RECOVERY: bring car back to D0 operating speed.
-            #
-            # D0 was measured at a specific speed. If subsequent probes
-            # happen at different speeds, deltas are not comparable
-            # (drag is speed-dependent). Recover to D0 speed ±2 km/h
-            # so all deltas are at consistent state.
-            # -------------------------------------------------------
-
-            # Capture target speed from D0 probe (first probe, value=0.0)
-            if probe_target_speed[0] is None:
-                probe_target_speed[0] = fb_before.get('speed', 0)
-                logger.info(f"    [SPEED] Target speed set to "
-                            f"{probe_target_speed[0]:.1f} km/h (from D0 probe)")
-            else:
-                fb_check = get_feedbacks_fn()
-                curr_speed = fb_check.get('speed', 0)
-                target = probe_target_speed[0]
-                tolerance = 2.0
-                recovery_frames = 0
-                neutral = {name: 0.0 for name in self.actions_config}
-
-                if curr_speed > target + tolerance:
-                    # Too fast — coast until near target
-                    while curr_speed > target + 1.0 and recovery_frames < 200:
-                        send_action_fn(neutral)
-                        wait_fn(frame_duration_s)
-                        curr_speed = get_feedbacks_fn().get('speed', 0)
-                        recovery_frames += 1
-                elif curr_speed < target - tolerance:
-                    # Too slow — gas until near target
-                    while curr_speed < target - 1.0 and recovery_frames < 200:
-                        send_action_fn(neutral | {'gas': 1.0})
-                        wait_fn(frame_duration_s)
-                        curr_speed = get_feedbacks_fn().get('speed', 0)
-                        recovery_frames += 1
-
-                if recovery_frames > 0:
-                    # Settle after speed change
-                    for _ in range(self.SETTLE_FRAMES):
-                        send_action_fn(neutral)
-                        wait_fn(frame_duration_s)
-                    final_speed = get_feedbacks_fn().get('speed', 0)
-                    logger.debug(f"    [SPEED] Recovered to {final_speed:.1f} km/h "
-                                 f"(target={target:.1f}, {recovery_frames} frames)")
 
             return pr
 
@@ -1000,9 +972,9 @@ class ExperimentationIntelligence:
         # =====================================================
         logger.info(f"[DISCOVERY] {action_name}: Downward sweep")
         logger.info(f"  Range: {action_range}, Precision: {self.search_precision}")
-        logger.info(f"  Epsilon: {action_epsilon}")
-        logger.info(f"  Probe: {probe_frames} game frames per probe, "
-                     f"{self.SETTLE_FRAMES} settle frames")
+        logger.info(f"  Noise epsilon: {noise_eps} (measurement variance floor)")
+        logger.info(f"  Signal epsilon: {signal_eps} (system precision)")
+        logger.info(f"  Probe: 1 frame per probe (pure Sutton)")
 
         self.phase = ExperimentationPhase.DISCOVERING
         a_max, a_min = disc.run_discovery(probe_one_frame)
@@ -1043,7 +1015,7 @@ class ExperimentationIntelligence:
 
         logger.info(f"  [RESULT] MAX={result.a_max_effective:.6f} (delta_max={result.delta_max:.6f}), "
                      f"MIN={result.a_min_effective:.6f} (identifiable={result.a_min_identifiable})")
-        logger.info(f"  Epsilon: {disc.epsilon}")
+        logger.info(f"  Epsilon: noise={disc.noise_epsilon}, signal={disc.signal_epsilon}")
 
         # =====================================================
         # BUILD BINS: uniform divisions of [MIN, MAX]
@@ -1188,17 +1160,10 @@ class ExperimentationCoordinator:
     (algorithm_spec_from_meetings.md).
     """
 
-    # Minimum speed for per-frame probes to produce clean, measurable deltas.
-    # Below this, drivetrain startup makes one-frame probes return noise.
+    # Minimum speed for per-frame probes to produce measurable deltas.
     # Sutton's example starts at speed=100 — car must be moving.
-    MIN_PROBE_SPEED = 25.0  # km/h — default for gas/steering
-
-    # Action-specific probe speeds. Brake needs higher speed because at
-    # low speeds, brake deceleration is indistinguishable from coast drag.
-    # At 50+ km/h, brake produces significantly more deceleration than drag.
-    ACTION_PROBE_SPEEDS = {
-        'brake': 50.0,
-    }
+    # Section 9: "system initializes" before experimentation.
+    MIN_PROBE_SPEED = 25.0  # km/h
 
     def __init__(
         self,
@@ -1220,28 +1185,13 @@ class ExperimentationCoordinator:
         self.frame_duration_s = frame_duration_s
         self.min_probe_speed = min_probe_speed or self.MIN_PROBE_SPEED
 
-    # Number of consecutive negative-delta frames required to confirm
-    # the car has settled into pure drag (no residual drivetrain momentum).
-    STABILIZATION_FRAMES = 5
-
     def ensure_measurable_regime(self):
-        """Ensure car is at speed where per-frame probes give clean deltas.
+        """System initialization (section 9) — get car moving before experimentation.
 
-        Sutton's example starts at speed=100 — the car is already moving.
-        From rest, one frame of gas produces zero measurable delta (drivetrain
-        startup). At cruising speed, every probe gives a clean, deterministic
-        result.
+        Section 5A: "Speed starts at 100" — car should be moving.
+        Section 3: "do not interfere" — don't RESET, but getting moving is init.
 
-        After reaching target speed, the car COASTS (gas=0) until the
-        per-frame delta is consistently negative (pure drag). This eliminates
-        residual drivetrain momentum that would contaminate D0.
-
-        This is NOT interference. Applying gas IS an action:
-            "not doing an action is also an action" (Jan 9, Feb 16)
-        So doing an action is also just an action.
-
-        "Don't interfere" means don't RESET to a controlled state.
-        Driving forward is the system's first action.
+        NO stabilization coast. NO overshoot. Start probing from here.
         """
         fb = self.get_feedbacks()
         speed = fb.get('speed', 0)
@@ -1251,7 +1201,7 @@ class ExperimentationCoordinator:
             return
 
         logger.info(f"[REGIME] Speed {speed:.1f} km/h < {self.min_probe_speed} — "
-                     f"applying gas to reach measurable regime")
+                     f"applying gas (system init, not experimentation)")
 
         frames = 0
         while speed < self.min_probe_speed:
@@ -1268,90 +1218,37 @@ class ExperimentationCoordinator:
                 break
 
         logger.info(f"[REGIME] Speed {speed:.1f} km/h reached in {frames} frames "
-                     f"({frames * self.frame_duration_s:.1f}s)")
-
-        # ---------------------------------------------------------------
-        # STABILIZATION: Coast until drag settles.
-        #
-        # After accelerating with gas=1.0, the drivetrain has residual
-        # momentum. If we probe D0 immediately, the delta is POSITIVE
-        # (residual accel) instead of NEGATIVE (drag). This contaminates
-        # the entire algorithm — D0 must measure clean drag.
-        #
-        # Coast (gas=0) until we see STABILIZATION_FRAMES consecutive
-        # frames with negative delta (pure drag, no residual momentum).
-        # ---------------------------------------------------------------
-        logger.info(f"[REGIME] Stabilizing — coasting until drag settles "
-                     f"(need {self.STABILIZATION_FRAMES} consecutive negative-delta frames)...")
-        neutral = {name: 0.0 for name in self.intelligence.actions_config}
-        prev_speed = speed
-        neg_streak = 0
-
-        for i in range(100):  # Max 5 seconds of coasting
-            self.send_action(neutral)
-            self.wait(self.frame_duration_s)
-            fb = self.get_feedbacks()
-            curr_speed = fb.get('speed', 0)
-            delta = curr_speed - prev_speed
-
-            if delta < 0:
-                neg_streak += 1
-            else:
-                neg_streak = 0
-
-            logger.debug(f"[REGIME] Coast frame {i+1}: speed={curr_speed:.3f}, "
-                          f"delta={delta:+.4f}, neg_streak={neg_streak}")
-            prev_speed = curr_speed
-
-            if neg_streak >= self.STABILIZATION_FRAMES:
-                logger.info(f"[REGIME] Stabilized after {i+1} coast frames "
-                             f"(speed={curr_speed:.1f} km/h, last delta={delta:+.4f})")
-                break
-
-            # Safety: if speed drops below usable range, stop coasting
-            if curr_speed < self.min_probe_speed * 0.5:
-                logger.warning(f"[REGIME] Speed dropped to {curr_speed:.1f} during stabilization, "
-                               f"re-accelerating")
-                # Re-accelerate and try again (with safety limit)
-                reaccel = 0
-                while curr_speed < self.min_probe_speed and reaccel < 200:
-                    self.send_action({name: 0.0 for name in self.intelligence.actions_config}
-                                      | {'gas': 1.0})
-                    self.wait(self.frame_duration_s)
-                    fb = self.get_feedbacks()
-                    curr_speed = fb.get('speed', 0)
-                    reaccel += 1
-                prev_speed = curr_speed
-                neg_streak = 0
-        else:
-            logger.warning(f"[REGIME] Stabilization did not converge in 100 frames "
-                           f"(speed={prev_speed:.1f})")
-
-        logger.info(f"[REGIME] Ready: speed={prev_speed:.1f} km/h (stabilized, pure drag)")
+                     f"({frames * self.frame_duration_s:.1f}s) — ready")
 
     def run_full_experimentation(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Run downward sweep for ALL actions."""
+        """Run downward sweep for ALL actions.
+
+        Section 3: "do not interfere with the experimentation."
+        Section 5C: "Starting from rest avoids this complexity entirely."
+
+        Gas/brake discover from rest (speed=0). At rest there is no drag,
+        no inertia, no momentum — Pong-like. Delta depends only on the
+        action value. Epsilon matches system float precision.
+
+        Steering needs displacement for heading measurement, so we
+        accelerate before steering (section 9: system initializes).
+        """
         logger.info("[COORDINATOR] Starting bin discovery (algorithm_spec_from_meetings.md)")
         logger.info(f"  Frame duration: {self.frame_duration_s*1000:.0f}ms "
-                     f"(1 frame per probe, no temporal aggregation)")
+                     f"(1 frame per probe, pure Sutton)")
         self.intelligence.start_time = time.time()
 
-        # Ensure car is moving — per-frame probes need measurable deltas.
-        # Sutton's example starts at speed=100 (car already at cruising speed).
-        self.ensure_measurable_regime()
+        fb = self.get_feedbacks()
+        logger.info(f"[COORDINATOR] Starting state: speed={fb.get('speed', 0):.1f} km/h")
 
         for action_name in self.intelligence.actions_config:
-            # Set action-specific probe speed (brake needs higher speed)
-            action_speed = self.ACTION_PROBE_SPEEDS.get(
-                action_name, self.MIN_PROBE_SPEED)
-            old_speed = self.min_probe_speed
-            self.min_probe_speed = action_speed
-
-            # Re-check speed before each action
-            self.ensure_measurable_regime()
+            # Steering needs car moving for heading measurement.
+            # Gas/brake discover from rest — Pong-like, no drag.
+            if action_name == 'steering':
+                self.ensure_measurable_regime()
 
             logger.info(f"\n{'='*60}")
-            logger.info(f"  DISCOVERING: {action_name} (probe speed: {action_speed} km/h)")
+            logger.info(f"  DISCOVERING: {action_name}")
             logger.info(f"{'='*60}")
 
             action_reset = self.reset_fns.get(action_name, self.reset_fn)
@@ -1364,9 +1261,6 @@ class ExperimentationCoordinator:
                 reset_fn=action_reset,
                 frame_duration_s=self.frame_duration_s
             )
-
-            # Restore default probe speed
-            self.min_probe_speed = old_speed
 
         self.intelligence._complete()
         return self.intelligence.get_discovered_bins()
