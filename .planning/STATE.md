@@ -1,7 +1,7 @@
 # Project State: Intelligent Agent Architecture
 
-**Last Updated:** 2026-02-23 paused — Sutton revert + TMNF migration in progress
-**Current Status:** Phase A code being reverted to pure Sutton + migrating to TMNF (deterministic)
+**Last Updated:** 2026-02-25 — Quick task 3 complete: TMNF adapter rewritten for TMInterface 2.x TCP bridge
+**Current Status:** TMNF adapter ready (TCP bridge); user must install TMNF + TMInterface 2.x + SuttonBridge.as plugin
 
 ## Project Reference
 
@@ -20,7 +20,7 @@ See: `.planning/PROJECT.md` (updated 2026-02-16)
 | Roadmap | DEFINED | Phase A done, Phase B-G planned in ROADMAP.md |
 | Phase A: Bin Discovery | COMPLETE | 100% Sutton compliance, live TrackMania verified |
 | Sutton Revert | IN PROGRESS | Strip engineering workarounds, pure single-frame probes (code written, untested) |
-| TMNF Migration | BLOCKED ON USER | Adapter written, user must install TMNF + TMInterface |
+| TMNF Migration | BLOCKED ON USER | TCP adapter + SuttonBridge.as plugin ready; user must install TMNF + TMInterface 2.x |
 | Phase B: Auto-Startup | NOT STARTED | After Sutton revert + TMNF testing |
 
 ## Phase A: Completed Work
@@ -51,6 +51,7 @@ See: `.planning/PROJECT.md` (updated 2026-02-16)
 |---|-------------|------|--------|-----------|
 | 1 | Refactor algorithm code to match meeting spec exactly | 2026-02-22 | 3e19bba | [1-refactor-algorithm-code-to-match-meeting](./quick/1-refactor-algorithm-code-to-match-meeting/) |
 | 2 | Wire ACTION_PROBE_FRAMES into probe + multi-frame probe system | 2026-02-22 | 6afaf24 | [2-wire-action-probe-frames-into-probe-one-](./quick/2-wire-action-probe-frames-into-probe-one-/) |
+| 3 | Rewrite TMNF adapter for TMInterface 2.x TCP bridge | 2026-02-25 | b073c2d | [3-rewrite-tmnf-adapter-for-tminterface-2-x](./quick/3-rewrite-tmnf-adapter-for-tminterface-2-x/) |
 
 ## Next Action
 
