@@ -311,7 +311,25 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
         dt = time.time() - t0
 
         if a_max is not None and a_min is not None:
-            bins = disc.build_bins()
+            # Precision discovery for analog inputs
+            # Spec: "Bins = range from MIN to MAX divided by the precision
+            #        the system can handle"
+            # Binary inputs (gas/brake): always 2 bins, skip precision
+            measured_precision = None
+            if config['type'] == 'analog':
+                measured_precision = disc.measure_precision(probe_fn)
+                if measured_precision is not None:
+                    computed_bins = math.ceil((a_max - a_min) / measured_precision)
+                    computed_bins = max(2, min(computed_bins, 100))
+                    logger.info(f"  [PRECISION] Measured precision: {measured_precision:.6f}")
+                    logger.info(f"  [PRECISION] Computed bin count: "
+                                f"ceil(({a_max:.6f}-{a_min:.6f})/{measured_precision:.6f}) "
+                                f"= {computed_bins}")
+                else:
+                    logger.info(f"  [PRECISION] Could not measure precision, "
+                                f"using default {disc.DEFAULT_NUM_BINS} bins")
+
+            bins = disc.build_bins(precision=measured_precision)
             if is_bidir:
                 bins = disc.make_bidirectional_bins(bins)
 
@@ -322,6 +340,8 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
             logger.info(f"    Probes = {probe_counter[0]}")
             logger.info(f"    Time   = {dt:.1f}s")
             logger.info(f"    Input type: {config['type']}")
+            if measured_precision is not None:
+                logger.info(f"    Precision: {measured_precision:.6f} (measured)")
             if config['type'] == 'binary':
                 logger.info(f"    (Binary input: expect 2 bins)")
 
@@ -334,6 +354,7 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
                 'delta_max':    disc.delta_max,
                 'delta_0':      disc.delta_0,
                 'input_type':   config['type'],
+                'precision':    measured_precision,
                 'bin_details': [
                     {'id': b.bin_id, 'min': b.a_min, 'max': b.a_max, 'label': b.label}
                     for b in bins

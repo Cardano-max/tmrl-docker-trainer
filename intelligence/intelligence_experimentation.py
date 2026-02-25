@@ -614,12 +614,21 @@ class FrameBinDiscovery:
     # Default number of bins between MIN and MAX
     DEFAULT_NUM_BINS = 10
 
-    def build_bins(self, num_bins: int = None) -> List[ActionBin]:
+    def build_bins(self, num_bins: int = None, precision: float = None) -> List[ActionBin]:
         """Build bins as uniform divisions of [MIN, MAX].
 
         Spec: "Store MIN, MAX, Δ per frame"
+              "Bins = range from MIN to MAX divided by the precision
+               the system can handle"
+
         Bins are COMPUTED from MIN/MAX range, not probed individually.
         The planner uses these to discretize the action space.
+
+        Args:
+            num_bins:  Explicit bin count (overrides precision).
+            precision: Measured system precision. If provided (and num_bins
+                       is not), computes n = ceil(range / precision),
+                       capped to [2, 100].
 
         Structure:
             BIN 0: DEAD_ZONE [0, MIN)  — no effect beyond D0
@@ -627,7 +636,16 @@ class FrameBinDiscovery:
         """
         a_min = self.a_min or 0.01
         a_max = self.a_max or self.action_range[1]
-        n = num_bins or self.DEFAULT_NUM_BINS
+
+        if num_bins is not None:
+            n = num_bins
+        elif precision is not None and precision > 0:
+            n = math.ceil((a_max - a_min) / precision)
+            n = max(2, min(n, 100))  # Cap to [2, 100]
+            logger.info(f"  [BINS] precision={precision:.6f} -> "
+                        f"n=ceil(({a_max:.6f}-{a_min:.6f})/{precision:.6f})={n}")
+        else:
+            n = self.DEFAULT_NUM_BINS
 
         bins: List[ActionBin] = []
 
@@ -664,6 +682,93 @@ class FrameBinDiscovery:
             ))
 
         return bins
+
+    # -----------------------------------------------------------------
+    # PRECISION DISCOVERY: smallest distinguishable action step
+    # -----------------------------------------------------------------
+
+    def measure_precision(
+        self,
+        probe_fn: Callable[[float], ProbeResult],
+        max_steps: int = 20
+    ) -> Optional[float]:
+        """Measure system precision via binary search.
+
+        Spec: "Precision is discovered, not assumed."
+              "Bins = range from MIN to MAX divided by the precision
+               the system can handle"
+
+        Precision = smallest action value difference that produces
+        a distinguishable delta.
+
+        Algorithm:
+            1. a_ref = MIN (smallest effective action)
+            2. a_cmp = midpoint of [MIN, MAX]
+            3. Probe both — they WILL differ (one is MIN, other is mid-range)
+            4. Binary search: narrow a_cmp toward a_ref
+               - If delta(mid) != delta(a_ref) → a_cmp = mid (try smaller)
+               - If delta(mid) == delta(a_ref) → a_low = mid (need bigger)
+            5. precision = a_cmp - original a_min
+
+        With deterministic rewind, != means literally not bit-equal.
+        For binary inputs (gas/brake), returns None — always 2 bins.
+
+        Returns:
+            float precision, or None if binary/invalid.
+        """
+        if self.a_min is None or self.a_max is None:
+            return None
+
+        # Binary input: no precision to measure
+        if (self.a_max - self.a_min) < self.search_precision * 10:
+            logger.info(f"  [PRECISION] Binary input -- skipping precision measurement")
+            return None
+
+        logger.info(f"  [PRECISION] Measuring system resolution...")
+        logger.info(f"    a_ref = MIN = {self.a_min:.6f}")
+        logger.info(f"    Initial a_cmp = midpoint = {(self.a_min + self.a_max) / 2:.6f}")
+
+        a_ref = self.a_min
+        a_low = self.a_min       # Boundary where delta IS same as ref
+        a_high = (self.a_min + self.a_max) / 2.0  # Boundary where delta IS different
+
+        # Get reference delta at MIN
+        pr_ref = probe_fn(a_ref)
+        delta_ref = pr_ref.delta_state
+        logger.info(f"    delta(a_ref={a_ref:.6f}) = {delta_ref:.8f}")
+
+        # Verify midpoint produces different delta
+        pr_high = probe_fn(a_high)
+        logger.info(f"    delta(a_cmp={a_high:.6f}) = {pr_high.delta_state:.8f}")
+
+        if self._deltas_are_same(pr_high.delta_state, delta_ref):
+            # Midpoint same as ref — precision is very coarse
+            precision = a_high - self.a_min
+            logger.info(f"    Midpoint indistinguishable from MIN -- coarse precision = {precision:.6f}")
+            return precision
+
+        # Binary search: narrow a_high toward a_ref
+        for step in range(max_steps):
+            if (a_high - a_low) < self.search_precision:
+                logger.info(f"    Step {step+1}: converged (interval < search_precision)")
+                break
+
+            mid = (a_low + a_high) / 2.0
+            pr_mid = probe_fn(mid)
+
+            if self._deltas_are_same(pr_mid.delta_state, delta_ref):
+                a_low = mid   # Can't distinguish from ref, need bigger step
+                logger.info(f"    Step {step+1}: a={mid:.6f} delta={pr_mid.delta_state:.8f} "
+                           f"SAME as ref -> a_low={a_low:.6f}")
+            else:
+                a_high = mid  # Still distinguishable, try smaller step
+                logger.info(f"    Step {step+1}: a={mid:.6f} delta={pr_mid.delta_state:.8f} "
+                           f"DIFF from ref -> a_high={a_high:.6f}")
+
+        precision = a_high - self.a_min
+        logger.info(f"    >>> PRECISION = {precision:.6f} "
+                    f"(smallest distinguishable step from MIN)")
+        return precision
 
     # -----------------------------------------------------------------
     # BIDIRECTIONAL (steering) support
