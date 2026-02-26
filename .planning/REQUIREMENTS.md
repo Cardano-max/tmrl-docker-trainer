@@ -19,17 +19,17 @@ All validated: 9/9 live rubrics, 12/12 offline tests, stable 3/3 runs on TMNF.
 
 ## System Initialization (INIT)
 
-- [ ] **INIT-01**: System validates config on startup before any experimentation
+- [x] **INIT-01**: System validates config on startup before any experimentation
   - _"we're gonna create us a validation first... the system validates the config"_ -- Jan 24
-- [ ] **INIT-02**: System checks for prior knowledge (existing graphs) at startup
+- [x] **INIT-02**: System checks for prior knowledge (existing graphs) at startup
   - _"when there is previous knowledge... no need to validate anything because the previous knowledge knows everything"_ -- Jan 24
-- [ ] **INIT-03**: If no prior knowledge, system runs bin discovery automatically before proceeding
+- [x] **INIT-03**: If no prior knowledge, system runs bin discovery automatically before proceeding
   - _"the system won't start before it the experiments"_ -- Jan 24
-- [ ] **INIT-04**: If prior knowledge exists, system loads it and skips experimentation
+- [x] **INIT-04**: If prior knowledge exists, system loads it and skips experimentation
   - _"when there is previous knowledge... no need to validate anything"_ -- Jan 24
-- [ ] **INIT-05**: System prints status during startup (validation started, bins acquired, graphs initialized, system ready)
+- [x] **INIT-05**: System prints status during startup (validation started, bins acquired, graphs initialized, system ready)
   - _"you can print everything to screen like validation started, bins acquired, graphs initialized and so on"_ -- Jan 24
-- [ ] **INIT-06**: Frame duration comes from environment config, not hardcoded
+- [x] **INIT-06**: Frame duration comes from environment config, not hardcoded
   - _"this needs to be determined by the system so it's being configured not hard-coded"_ -- Jan 24
 
 ## Brain Capacity Micro-Processes (BRAIN)
@@ -164,12 +164,12 @@ All validated: 9/9 live rubrics, 12/12 offline tests, stable 3/3 runs on TMNF.
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| INIT-01 | Phase 1: System Initialization | Pending |
-| INIT-02 | Phase 1: System Initialization | Pending |
-| INIT-03 | Phase 1: System Initialization | Pending |
-| INIT-04 | Phase 1: System Initialization | Pending |
-| INIT-05 | Phase 1: System Initialization | Pending |
-| INIT-06 | Phase 1: System Initialization | Pending |
+| INIT-01 | Phase 1: System Initialization | ✓ Done |
+| INIT-02 | Phase 1: System Initialization | ✓ Done |
+| INIT-03 | Phase 1: System Initialization | ✓ Done |
+| INIT-04 | Phase 1: System Initialization | ✓ Done |
+| INIT-05 | Phase 1: System Initialization | ✓ Done |
+| INIT-06 | Phase 1: System Initialization | ✓ Done |
 | BRAIN-01 | Phase 2: Brain Capacity Micro-Processes | Pending |
 | BRAIN-02 | Phase 2: Brain Capacity Micro-Processes | Pending |
 | BRAIN-03 | Phase 2: Brain Capacity Micro-Processes | Pending |
