@@ -31,11 +31,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. System automatically runs bin discovery when no prior knowledge exists, then proceeds
   4. System prints clear status messages at each startup stage (validation, bins, graphs, ready)
   5. Frame duration is read from environment config, never hardcoded
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md -- TMNF config, validator update, prior knowledge detection
+- [ ] 01-02-PLAN.md -- SystemInitializer rewrite + offline integration tests
 
 ### Phase 2: Brain Capacity Micro-Processes
 **Goal**: The six micro-processes from Jan 9 meeting work as small, generic, composable building blocks that intelligence modules orchestrate
@@ -127,7 +127,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|---------------|--------|-----------|
-| 1. System Initialization | 0/TBD | Not started | - |
+| 1. System Initialization | 0/2 | Planned | - |
 | 2. Brain Capacity Micro-Processes | 0/TBD | Not started | - |
 | 3. Knowledge Graph Infrastructure | 0/TBD | Not started | - |
 | 4. Exploration and Awareness | 0/TBD | Not started | - |
