@@ -1,246 +1,183 @@
-# Requirements: Intelligent Agent Architecture (MPC-RL Hybrid)
+# Requirements: Milestone v1.0 Full Sutton Pipeline
 
-**Defined:** 2026-02-16 (Deep transcription analysis)
-**Core Value:** Enable safe, goal-based autonomous learning that scales hierarchically
-
----
-
-## v1 Requirements (Foundation: Brain Capacity + Knowledge Acquisition)
-
-### Configuration System
-
-- [ ] **CONFIG-01**: System reads JSON configuration file defining action names, action bin ranges, action constraints
-- [ ] **CONFIG-02**: System reads JSON configuration file defining environment feedback types (position, velocity, etc.) and their units
-- [ ] **CONFIG-03**: System validates configuration completeness (all required fields present, no contradictions)
-- [ ] **CONFIG-04**: System is environment-agnostic (same code runs with different configs for TrackMania/drone/robot)
-- [ ] **CONFIG-05**: Configuration defines hard vs soft constraints for each action
-
-### State Management
-
-- [ ] **STATE-01**: System tracks current state as dictionary of all feedback values at current frame
-- [ ] **STATE-02**: System maintains previous state pointer (for detecting discontinuities)
-- [ ] **STATE-03**: System maintains history buffer (last 100 states minimum)
-- [ ] **STATE-04**: System records state timestamp (both environment frame and system clock)
-- [ ] **STATE-05**: System detects state discontinuities (e.g., robot teleported between episodes)
-- [ ] **STATE-06**: State vector can be converted to hash for fast comparison
-
-### Action Discretization
-
-- [ ] **ACTION-01**: System reads continuous action ranges from config and creates discrete bins (e.g., gas: 0-1 → low/medium/high)
-- [ ] **ACTION-02**: System generates all possible action combinations (e.g., gas+left, brake+right)
-- [ ] **ACTION-03**: System enforces action constraints (e.g., cannot accelerate > 100 km/h)
-- [ ] **ACTION-04**: System differentiates hard constraints (system stops) vs soft constraints (warning)
-- [ ] **ACTION-05**: System represents discrete actions by name, not index (human-readable graph edges)
-
-### Knowledge Graph Foundation
-
-- [ ] **GRAPH-01**: For each state variable (position, velocity, etc.), system creates empty graph at initialization
-- [ ] **GRAPH-02**: Graph nodes represent state intervals (e.g., position node = "40-45 meters")
-- [ ] **GRAPH-03**: Graph edges represent state transitions via specific actions
-- [ ] **GRAPH-04**: Graph edges are labeled with action names and bins (e.g., "gas→high", "brake→medium")
-- [ ] **GRAPH-05**: System stores graph nodes as: [min_value, max_value, properties_dict]
-- [ ] **GRAPH-06**: System stores graph edges as: [from_node_id, to_node_id, action_name, action_bin, timestamp]
-
-### State Recording During Episodes
-
-- [ ] **RECORD-01**: At each frame, system observes all state variable values from environment
-- [ ] **RECORD-02**: For each state variable, system queries knowledge graph: "Is there a node for this value?"
-- [ ] **RECORD-03**: If node exists, system records transition: previous_state → current_state via action
-- [ ] **RECORD-04**: If node doesn't exist, system creates new node with interval and records transition
-- [ ] **RECORD-05**: All edges are labeled with the action that caused the transition (from config)
-- [ ] **RECORD-06**: System handles simultaneous multi-variable transitions (e.g., gas affects both velocity AND position)
-- [ ] **RECORD-07**: Episode data is persisted after episode ends (not lost on restart)
-
-### Knowledge Graph Querying
-
-- [ ] **QUERY-01**: System can retrieve node given state value (e.g., "Is position 42.5 in a known node?")
-- [ ] **QUERY-02**: System can list all edges from a node (all tried actions)
-- [ ] **QUERY-03**: System can list all edges not yet tried from a node
-- [ ] **QUERY-04**: System can retrieve transition history for a state (which actions led here)
-- [ ] **QUERY-05**: Query operations complete in <100ms (performance requirement)
-
-### Data Input vs Data Knowledge
-
-- [ ] **KNOWLEDGE-01**: System distinguishes data inputs (raw sensor values) from derived knowledge (position→velocity via math)
-- [ ] **KNOWLEDGE-02**: System can deduce velocity from position + time without separate graph
-- [ ] **KNOWLEDGE-03**: System can deduce acceleration from velocity + time without separate graph
-- [ ] **KNOWLEDGE-04**: User specifies which variables are inputs vs derived (reduces graph explosion)
-
-### Multi-Episode Memory
-
-- [ ] **MEMORY-01**: System retains all knowledge graphs across episodes
-- [ ] **MEMORY-02**: System can replay previous episode exactly (given episode ID)
-- [ ] **MEMORY-03**: System can extract successful trajectories from past episodes
-- [ ] **MEMORY-04**: Old episodes can be archived/compressed (configurable retention)
+**Created:** 2026-02-26
+**Source:** 6 Dr. Sutton meeting transcripts + authoritative spec
+**Scope:** Complete system from brain capacity through hierarchical intelligence
+**Environment:** TMNF + TMInterface (primary), TM2020 (compat)
 
 ---
 
-## v2 Requirements (Intelligence Layer: Planning, Exploration, Hierarchical Control)
+## Previously Validated (Phase A: Bin Discovery -- DONE)
 
-### Exploration Intelligence
+REQ-01 through REQ-25 from `Authoratative_law_from_Jan2026_meetings.md`:
+Frame atomicity, MIN/MAX discovery, precision discovery, bins in action space,
+no noise, no interference, per-frame probing, bidirectional steering.
 
-- [ ] **EXPLORE-01**: System identifies untried actions at a given state node
-- [ ] **EXPLORE-02**: System performs depth-first search: try untried actions before moving to new nodes
-- [ ] **EXPLORE-03**: System tracks which actions have been tried (combination count matching max combinations)
-- [ ] **EXPLORE-04**: System handles n-ary action combinations (not just pairwise)
-
-### Planning Intelligence
-
-- [ ] **PLAN-01**: User specifies goal as interval (e.g., position 50-60, velocity 20-30)
-- [ ] **PLAN-02**: System finds path through graph from current node to goal node
-- [ ] **PLAN-03**: System returns sequence of actions to reach goal
-- [ ] **PLAN-04**: System validates path satisfies all constraints (hard/soft)
-- [ ] **PLAN-05**: System handles "path not found" gracefully (returns safe fallback action or stops)
-
-### Dynamic Constraint Intervals
-
-- [ ] **DCONST-01**: System defines interval for each goal (e.g., position must be 50-60)
-- [ ] **DCONST-02**: System calculates distance from current state to interval
-- [ ] **DCONST-03**: System adjusts planning frequency (timestep) based on distance-to-goal
-- [ ] **DCONST-04**: Closer to boundary = faster replanning (higher frequency)
-
-### Hierarchical Goal Composition
-
-- [ ] **HIER-01**: System composes multiple constraints: goal_1 ∩ goal_2 ∩ goal_3 = compound goal
-- [ ] **HIER-02**: System decomposes compound goal into subgoals
-- [ ] **HIER-03**: System plans at multiple levels (move to position THEN adjust velocity)
-- [ ] **HIER-04**: Each level respects constraints of parent level
-
-### Repetition Intelligence (Copy Last Episode)
-
-- [ ] **REPEAT-01**: System can extract successful trajectory from previous episode
-- [ ] **REPEAT-02**: System replays trajectory by following same action sequence
-- [ ] **REPEAT-03**: If state is unknown, system flags and explores
+All validated: 9/9 live rubrics, 12/12 offline tests, stable 3/3 runs on TMNF.
 
 ---
 
-## v3 Requirements (Safety, Production Hardening)
+## System Initialization (INIT)
 
-### Safety Constraints
+- [ ] **INIT-01**: System validates config on startup before any experimentation
+  - _"we're gonna create us a validation first... the system validates the config"_ -- Jan 24
+- [ ] **INIT-02**: System checks for prior knowledge (existing graphs) at startup
+  - _"when there is previous knowledge... no need to validate anything because the previous knowledge knows everything"_ -- Jan 24
+- [ ] **INIT-03**: If no prior knowledge, system runs bin discovery automatically before proceeding
+  - _"the system won't start before it the experiments"_ -- Jan 24
+- [ ] **INIT-04**: If prior knowledge exists, system loads it and skips experimentation
+  - _"when there is previous knowledge... no need to validate anything"_ -- Jan 24
+- [ ] **INIT-05**: System prints status during startup (validation started, bins acquired, graphs initialized, system ready)
+  - _"you can print everything to screen like validation started, bins acquired, graphs initialized and so on"_ -- Jan 24
+- [ ] **INIT-06**: Frame duration comes from environment config, not hardcoded
+  - _"this needs to be determined by the system so it's being configured not hard-coded"_ -- Jan 24
 
-- [ ] **SAFETY-01**: Hard constraints are never violated (system stops if violated)
-- [ ] **SAFETY-02**: Soft constraints trigger warnings but allow action
-- [ ] **SAFETY-03**: Graceful failure: if no valid action, system defaults to safe state
-- [ ] **SAFETY-04**: Real-world mode differs from simulation (learning constraints are stricter in real world)
+## Brain Capacity Micro-Processes (BRAIN)
 
-### Performance & Scalability
+- [ ] **BRAIN-01**: Send an action to the environment (per frame)
+  - _"your function to send actions should send actions per frame"_ -- Jan 15
+- [ ] **BRAIN-02**: Perform an action (environment executes it for exactly one frame)
+  - _"by sending an action you send an action just for that frame"_ -- Jan 15
+- [ ] **BRAIN-03**: Record the action (store what was sent)
+  - _"six things here one is send an action... record the action"_ -- Jan 9
+- [ ] **BRAIN-04**: Receive a feedback from the environment
+  - _"receive a feedback... collect the feedback"_ -- Jan 9
+- [ ] **BRAIN-05**: Collect that feedback (capture all state variables)
+  - _"receive a feedback... collect the feedback"_ -- Jan 9
+- [ ] **BRAIN-06**: Record the feedback (store in graph as node)
+  - _"record the feedback"_ -- Jan 9
+- [ ] **BRAIN-07**: Query the graph (search for node, edge, or relationship)
+  - _"sometimes I'm going to query the graph on my current state. Sometimes... future state. Sometimes... the past"_ -- Jan 9
+- [ ] **BRAIN-08**: Initialize graphs (one graph per environment feedback variable)
+  - _"experimentation... is also capacity... it's going to determine things before we can start recording our graph"_ -- Jan 24
+- [ ] **BRAIN-09**: Compare current state vs known state
+  - _"awareness is just comparing where I think I am and what the environment tells that I am"_ -- Jan 9
+- [ ] **BRAIN-10**: Micro-processes are small, modular, generic -- intelligence orchestrates them
+  - _"instead of creating exploration, let's create small pieces. Then... we're just going to use the small pieces"_ -- Jan 9
 
-- [ ] **PERF-01**: System handles 100+ independent state variables
-- [ ] **PERF-02**: System handles 1000+ action combinations
-- [ ] **PERF-03**: Query response <100ms for any operation
-- [ ] **PERF-04**: Memory usage bounded (configurable history retention)
+## Knowledge Graph Infrastructure (GRAPH)
 
-### Production Features
+- [ ] **GRAPH-01**: Nodes represent discretized state values (feedback values like speed, position)
+  - _"action are being stored as a relationship feedback being stored as notes"_ -- Jan 9
+- [ ] **GRAPH-02**: Edges represent action bins that caused transitions
+  - _"action are being stored as a relationship"_ -- Jan 9
+- [ ] **GRAPH-03**: Node discretization by system precision (from bin discovery)
+  - _"the minimum is 0.1... every 0.1 becomes one node because that's the bin"_ -- Jan 15
+- [ ] **GRAPH-04**: No duplicate nodes -- returning to a state reuses existing node
+  - _"is the duplication of nodes allowed or not? No not at all"_ -- Jan 24
+- [ ] **GRAPH-05**: One graph per feedback variable (speed graph, position graph, etc.)
+  - Jan 9 architecture: separate graphs per state variable
+- [ ] **GRAPH-06**: All graphs updated simultaneously per frame
+  - _"recording a graph is gonna be multiple graphs at the same time in the frame"_ -- Jan 24
+- [ ] **GRAPH-07**: Same state reachable via different actions = same node with multiple edges
+  - _"you go to the same node in two different ways"_ -- Authoritative Law F
+- [ ] **GRAPH-08**: Knowledge graph stores bins, not raw continuous action values
+  - REQ-18 from Authoritative Law
+- [ ] **GRAPH-09**: Precision limits state resolution (unreachable states don't get nodes)
+  - _"If the system doesn't report it, it doesn't exist"_ -- Authoritative Law H
+- [ ] **GRAPH-10**: Per-frame recording: one node per graph with the action edge that caused the transition
+  - _"on this frame the system knows an action and a feedback... then on the next frame a feedback and an action"_ -- Jan 15
+- [ ] **GRAPH-11**: Time is implicit in graph traversal (not stored explicitly)
+  - _"time stamp in this graph is the difference between nodes"_ -- Jan 9
+- [ ] **GRAPH-12**: Multiplicity testing -- intermediate actions between MIN and MAX validated experimentally
+  - _"you must test multiples... you cannot assume linearity"_ -- Jan 31 Pong
 
-- [ ] **PROD-01**: Comprehensive logging of all state-action transitions
-- [ ] **PROD-02**: System can export graphs for analysis/visualization
-- [ ] **PROD-03**: System can import pre-trained graphs
-- [ ] **PROD-04**: Monitoring/health checks for graph integrity
-- [ ] **PROD-05**: Rollback capability (revert to previous graph state)
+## Exploration Intelligence (EXPLORE)
+
+- [ ] **EXPLORE-01**: At current state node, query all graphs for tried actions
+  - _"I check what nodes are the amine. I receive the information back of all the possible relationships"_ -- Jan 9
+- [ ] **EXPLORE-02**: Compare tried actions against global combination list to find untried actions
+  - _"I search from my list of combinations of relationships. And I see which one I haven't performed yet"_ -- Jan 9
+- [ ] **EXPLORE-03**: Perform the untried action and record result in all graphs
+  - _"And then I perform that one"_ -- Jan 9
+- [ ] **EXPLORE-04**: Depth-first search through graph for systematic exploration
+  - Jan 9: exploration = search algorithm through graph
+- [ ] **EXPLORE-05**: Episode-based exploration (start, explore, end, save trajectory)
+  - Jan 24: after experimentation, exploration is the first intelligence
+- [ ] **EXPLORE-06**: Repetition -- replay successful trajectories from previous episodes
+  - Jan 9: repetition intelligence uses prior episode data
+
+## Awareness Intelligence (AWARE)
+
+- [ ] **AWARE-01**: Collect current state from environment ("where the environment says I am")
+  - _"where I am that you're saying comes from the environment"_ -- Jan 9
+- [ ] **AWARE-02**: Search current state in knowledge graph ("where I think I am")
+  - _"where I am internally on the system is important"_ -- Jan 9
+- [ ] **AWARE-03**: Compare environment state vs graph state, flag discrepancies
+  - _"awareness is just comparing where I think I am and what the environment tells that I am, that's it"_ -- Jan 9
+
+## Planning / MPC Intelligence (PLAN)
+
+- [ ] **PLAN-01**: Goal defined as interval on state variable (e.g., position 50-60)
+  - _"the first goal is to be from 51 to 100... the second goal is speed from 45 to 55"_ -- pre-2026
+- [ ] **PLAN-02**: Planning = pathfinding through the knowledge graph
+  - _"Planning is just finding path from here to here"_ -- Jan 31 Graph
+- [ ] **PLAN-03**: Multi-frame chaining when target unreachable in one frame
+  - _"can I go in one frame from 100 to 112? No... in two frames? Yes"_ -- Jan 31 Graph
+- [ ] **PLAN-04**: System knows what's achievable per frame (from MIN/MAX/bins)
+  - _"If our system calculates it needs to move from 100 to 112 in one frame, the system knows that is wrong"_ -- Jan 31 Graph
+- [ ] **PLAN-05**: Dynamic timestep -- increase planning frequency when off-target
+  - _"the frequency of the calculation is going to be higher"_ -- pre-2026
+- [ ] **PLAN-06**: Constraint intervals -- cannot leave safe bounds during planning
+  - _"for us, falling is not an option"_ -- pre-2026
+- [ ] **PLAN-07**: Graceful failure when no path found
+  - _"path not found for such safety"_ -- pre-2026
+
+## Hierarchical Intelligence (HIER)
+
+- [ ] **HIER-01**: Goal composition -- combine multiple intervals across variables (AND logic)
+  - _"the first goal is to be from 51 to 100. The second goal is speed from 45 to 55. And then distance from other car..."_ -- pre-2026
+- [ ] **HIER-02**: Goal decomposition into achievable subgoals
+  - Vacuum robot analogy: decompose complex goals into Level 1 actions
+- [ ] **HIER-03**: Multi-level planning (Level N operates on aggregates of Level N-1)
+  - Vacuum robot: Level 1 = individual, Level 2 = coordinate 2, Level 3 = coordinate floors
+- [ ] **HIER-04**: Inter-level communication (Level N sends commands down, Level N-1 sends state up)
+  - Architecture meetings: information flows bidirectionally between levels
+- [ ] **HIER-05**: System stops if no safe path found through all constraint layers
+  - Goal-based, not reward-based: system must respect all constraints
 
 ---
+
+## Future Requirements (Deferred from this milestone)
+
+- Knowledge derivation (speed = delta-position / delta-time) -- optimization after core works
+- Stress testing (60,000 nodes/second performance) -- after graph infrastructure proven
+- Graph persistence to FalkorDB -- after in-memory graphs working
+- Documentation mode (skip experimentation if system has docs) -- after experimentation proven
+- Multi-environment validation (drones, robots) -- needs simulated environments
+- Production hardening (logging, monitoring, rollback) -- after core pipeline works
+- Safety modes (simulation vs real-world) -- after planning works
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Neural network training during execution | Knowledge graphs are explicit, not learned models |
-| Reward functions (traditional RL) | Goal/constraint-based system, not reward-based |
-| Multi-agent coordination | Single-agent focus for foundation layer |
-| Real-time GPU acceleration | CPU-first, can optimize later |
-| Automatic action/feedback discovery | User specifies in config (safety-critical) |
+| GPU acceleration | CPU-first implementation |
+| Neural network training | Graphs are data structures, not learned models |
+| Reward functions (traditional RL) | Goal/constraint-based, not reward-based |
+| Multi-agent communication | Single-agent focus |
+| Real-world hardware deployment | Simulation-first |
 
 ---
 
 ## Traceability
 
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| CONFIG-01 | Phase 1 | Pending |
-| CONFIG-02 | Phase 1 | Pending |
-| CONFIG-03 | Phase 1 | Pending |
-| CONFIG-04 | Phase 1 | Pending |
-| CONFIG-05 | Phase 1 | Pending |
-| STATE-01 | Phase 1 | Pending |
-| STATE-02 | Phase 1 | Pending |
-| STATE-03 | Phase 1 | Pending |
-| STATE-04 | Phase 1 | Pending |
-| STATE-05 | Phase 1 | Pending |
-| STATE-06 | Phase 1 | Pending |
-| ACTION-01 | Phase 1 | Pending |
-| ACTION-02 | Phase 1 | Pending |
-| ACTION-03 | Phase 1 | Pending |
-| ACTION-04 | Phase 1 | Pending |
-| ACTION-05 | Phase 1 | Pending |
-| GRAPH-01 | Phase 2 | Pending |
-| GRAPH-02 | Phase 2 | Pending |
-| GRAPH-03 | Phase 2 | Pending |
-| GRAPH-04 | Phase 2 | Pending |
-| GRAPH-05 | Phase 2 | Pending |
-| GRAPH-06 | Phase 2 | Pending |
-| RECORD-01 | Phase 2 | Pending |
-| RECORD-02 | Phase 2 | Pending |
-| RECORD-03 | Phase 2 | Pending |
-| RECORD-04 | Phase 2 | Pending |
-| RECORD-05 | Phase 2 | Pending |
-| RECORD-06 | Phase 2 | Pending |
-| RECORD-07 | Phase 2 | Pending |
-| QUERY-01 | Phase 2 | Pending |
-| QUERY-02 | Phase 2 | Pending |
-| QUERY-03 | Phase 2 | Pending |
-| QUERY-04 | Phase 2 | Pending |
-| QUERY-05 | Phase 2 | Pending |
-| KNOWLEDGE-01 | Phase 2 | Pending |
-| KNOWLEDGE-02 | Phase 2 | Pending |
-| KNOWLEDGE-03 | Phase 2 | Pending |
-| KNOWLEDGE-04 | Phase 2 | Pending |
-| MEMORY-01 | Phase 2 | Pending |
-| MEMORY-02 | Phase 2 | Pending |
-| MEMORY-03 | Phase 2 | Pending |
-| MEMORY-04 | Phase 2 | Pending |
-| EXPLORE-01 | Phase 3 | Pending |
-| EXPLORE-02 | Phase 3 | Pending |
-| EXPLORE-03 | Phase 3 | Pending |
-| EXPLORE-04 | Phase 3 | Pending |
-| PLAN-01 | Phase 4 | Pending |
-| PLAN-02 | Phase 4 | Pending |
-| PLAN-03 | Phase 4 | Pending |
-| PLAN-04 | Phase 4 | Pending |
-| PLAN-05 | Phase 4 | Pending |
-| DCONST-01 | Phase 4 | Pending |
-| DCONST-02 | Phase 4 | Pending |
-| DCONST-03 | Phase 4 | Pending |
-| DCONST-04 | Phase 4 | Pending |
-| HIER-01 | Phase 5 | Pending |
-| HIER-02 | Phase 5 | Pending |
-| HIER-03 | Phase 5 | Pending |
-| HIER-04 | Phase 5 | Pending |
-| REPEAT-01 | Phase 3 | Pending |
-| REPEAT-02 | Phase 3 | Pending |
-| REPEAT-03 | Phase 3 | Pending |
-| SAFETY-01 | Phase 6 | Pending |
-| SAFETY-02 | Phase 6 | Pending |
-| SAFETY-03 | Phase 6 | Pending |
-| SAFETY-04 | Phase 6 | Pending |
-| PERF-01 | Phase 6 | Pending |
-| PERF-02 | Phase 6 | Pending |
-| PERF-03 | Phase 6 | Pending |
-| PERF-04 | Phase 6 | Pending |
-| PROD-01 | Phase 7 | Pending |
-| PROD-02 | Phase 7 | Pending |
-| PROD-03 | Phase 7 | Pending |
-| PROD-04 | Phase 7 | Pending |
-| PROD-05 | Phase 7 | Pending |
+_Filled by roadmap after phase assignment._
 
-**Coverage:**
-- v1 requirements: 48 total
-- v2 requirements: 14 total
-- v3 requirements: 14 total
-- **Total: 76 requirements**
-- Mapped to phases: 76
-- Unmapped: 0 ✓
+| REQ-ID | Phase | Status |
+|--------|-------|--------|
+| INIT-01 to INIT-06 | TBD | Pending |
+| BRAIN-01 to BRAIN-10 | TBD | Pending |
+| GRAPH-01 to GRAPH-12 | TBD | Pending |
+| EXPLORE-01 to EXPLORE-06 | TBD | Pending |
+| AWARE-01 to AWARE-03 | TBD | Pending |
+| PLAN-01 to PLAN-07 | TBD | Pending |
+| HIER-01 to HIER-05 | TBD | Pending |
+
+**Coverage:** 49 requirements across 7 categories
+**All derived from Sutton meeting transcripts -- no invented requirements**
 
 ---
 
-*Requirements defined: 2026-02-16*
-*Last updated: 2026-02-16 after comprehensive transcription analysis*
+*Requirements defined: 2026-02-26*
+*Source: 6 meeting transcripts + authoritative spec + authoritative law*
