@@ -1,11 +1,11 @@
 # Project State: Intelligent Agent Architecture
 
-**Last Updated:** 2026-02-25 — Quick task 3 complete: TMNF adapter rewritten for TMInterface 2.x TCP bridge
-**Current Status:** TMNF adapter ready (TCP bridge); user must install TMNF + TMInterface 2.x + SuttonBridge.as plugin
+**Last Updated:** 2026-02-26 -- Milestone v1.0 started
+**Current Status:** Defining requirements for Full Sutton Pipeline
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-02-16)
+See: `.planning/PROJECT.md` (updated 2026-02-26)
 
 **Core Value:** Enable safe, goal-based autonomous learning that scales hierarchically
 
@@ -13,106 +13,66 @@ See: `.planning/PROJECT.md` (updated 2026-02-16)
 
 ## Current Position
 
-| Aspect | Status | Notes |
-|--------|--------|-------|
-| Vision | DEFINED | Hybrid MPC-RL system, Sutton-compliant architecture |
-| Requirements | DEFINED | 39 requirements extracted from 6 meeting transcriptions |
-| Roadmap | DEFINED | Phase A done, Phase B-G planned in ROADMAP.md |
-| Phase A: Bin Discovery | COMPLETE | 100% Sutton compliance, live TrackMania verified |
-| Sutton Revert | IN PROGRESS | Strip engineering workarounds, pure single-frame probes (code written, untested) |
-| TMNF Migration | BLOCKED ON USER | TCP adapter + SuttonBridge.as plugin ready; user must install TMNF + TMInterface 2.x |
-| Phase B: Auto-Startup | NOT STARTED | After Sutton revert + TMNF testing |
+Phase: Not started (defining requirements)
+Plan: --
+Status: Defining requirements
+Last activity: 2026-02-26 -- Milestone v1.0 Full Sutton Pipeline started
 
-## Phase A: Completed Work
+---
 
-**What was done:**
-- Implemented Sutton's 4-step bin discovery algorithm (ExperimentationCoordinator)
-- Ran live test with TrackMania: 128 experiments, 6.74 seconds
-- All 15 hard constraints PASSED
-- All 39 requirements from 6 meetings verified
-- Comprehensive verification document created
+## Accumulated Context
 
-**Key Results:**
-- Gas: MIN=1e-06, MAX=1.0, 35 bins (analog)
-- Brake: MIN=1.0, MAX=1.0, 2 bins (binary)
-- Steering: MIN=0.01, MAX=1.0, 21 bins (symmetric bidirectional)
+### Phase A: Bin Discovery (COMPLETE)
+
+**What shipped:**
+- Sutton's 4-step bin discovery algorithm (FrameBinDiscovery)
+- Precision discovery via binary search (measure_precision)
+- TMNF + TMInterface TCP bridge (SuttonBridge.as + tmnf_adapter.py)
+- Gas: 2 bins (binary), Brake: 2 bins (binary), Steering: 201 bins (precision-discovered)
+- 9/9 live rubrics, 12/12 offline tests, stable 3/3 runs
+- REQ-01 through REQ-25 validated
 
 **Key Files:**
-- `intelligence/intelligence_experimentation.py` - Core algorithm (1564 lines)
-- `control/system_initializer.py` - System initialization with bin acquisition
-- `test_phase_a_live.py` - Live test script
-- `.planning/SUTTON_ALGORITHM_VERIFICATION.md` - Complete verification against all 6 meetings
-- `PHASE_A_COMPLETE.md` - Phase A completion summary
-- `PHASE_A_IMPLEMENTATION_SUMMARY.md` - Implementation details
+- `intelligence/intelligence_experimentation.py` -- Core algorithm
+- `adapters/tmnf_adapter.py` -- TMNF TCP bridge
+- `TMinterface/SuttonBridge.as` -- AngelScript plugin for TMInterface 2.x
+- `test_phase_a_tmnf.py` -- Live test
+- `tests/test_precision_discovery.py` -- Offline tests
+- `verify_rubrics.py` -- 9 live rubric tests
 
 ### Quick Tasks Completed
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 1 | Refactor algorithm code to match meeting spec exactly | 2026-02-22 | 3e19bba | [1-refactor-algorithm-code-to-match-meeting](./quick/1-refactor-algorithm-code-to-match-meeting/) |
-| 2 | Wire ACTION_PROBE_FRAMES into probe + multi-frame probe system | 2026-02-22 | 6afaf24 | [2-wire-action-probe-frames-into-probe-one-](./quick/2-wire-action-probe-frames-into-probe-one-/) |
-| 3 | Rewrite TMNF adapter for TMInterface 2.x TCP bridge | 2026-02-25 | b073c2d | [3-rewrite-tmnf-adapter-for-tminterface-2-x](./quick/3-rewrite-tmnf-adapter-for-tminterface-2-x/) |
+| 1 | Refactor algorithm code to match meeting spec exactly | 2026-02-22 | 3e19bba | quick/1-refactor-algorithm-code-to-match-meeting/ |
+| 2 | Wire ACTION_PROBE_FRAMES into probe + multi-frame probe system | 2026-02-22 | 6afaf24 | quick/2-wire-action-probe-frames-into-probe-one-/ |
+| 3 | Rewrite TMNF adapter for TMInterface 2.x TCP bridge | 2026-02-25 | b073c2d | quick/3-rewrite-tmnf-adapter-for-tminterface-2-x/ |
 
-## Next Action
+### Decision Log
 
-**Start Phase B: Auto-Startup Integration**
-
-Phase B will make bin discovery automatic during system startup (no manual script execution needed).
-
-Work needed:
-1. Add config flag: `experimentation.enabled_at_startup`
-2. Auto-call ExperimentationCoordinator in system init
-3. System waits for bins, then proceeds to normal operation
-4. Estimated: 1 day of work
-
-To start:
-- [ ] Command: `/gsd:plan-phase` for Phase B
-- [ ] Or directly implement the 3 changes listed above
-
-## Blockers
-
-None — Phase A is complete and verified, ready for Phase B.
-
-## Decision Log
-
-**Decision:** Use ExperimentationCoordinator (intelligence_experimentation.py) as the single implementation
-- **Rationale:** Most complete of the 3 parallel implementations; includes all 4 steps + bidirectional steering
-- **Outcome:** LOCKED — verified with live TrackMania
-
-**Decision:** Build modular, config-driven system
-- **Rationale:** Multiple environments need same architecture with different configs
-- **Outcome:** LOCKED — all phases assume environment-agnostic design
-
-**Decision:** Separate graph per state variable
-- **Rationale:** Reveals action dependencies, enables knowledge derivation
-- **Outcome:** LOCKED — Phase B+ implements per-variable graphs
-
-**Decision:** Goal/constraint-based planning instead of reward functions
-- **Rationale:** Safety-critical systems cannot learn through failure
-- **Outcome:** LOCKED — Phases 4-5 implement constraint-respecting planning
-
-**Decision:** Three-layer architecture (Brain Capacity -> Knowledge -> Intelligence)
-- **Rationale:** Dr. Sutton's research distinguishes architecture from knowledge from use
-- **Outcome:** LOCKED -- Phase A validates experimentation intelligence layer
-
-**Decision:** D0 measurement is setup context, not a separate algorithm phase (quick-1)
-- **Rationale:** algorithm_spec_from_meetings.md section 13 says "Measure D0 as a separate first step" was NOT from the meetings
-- **Outcome:** LOCKED -- MEASURING_DELTA0 removed from enum, D0 probe is part of sweep setup
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| FrameBinDiscovery as single implementation | Most complete; includes all 4 steps + bidirectional steering | LOCKED |
+| Config-driven, env-agnostic | Multiple environments, same architecture | LOCKED |
+| Separate graph per state variable | Reveals action dependencies, enables knowledge derivation | LOCKED |
+| Goal/constraint-based planning, not reward | Safety-critical systems cannot learn through failure | LOCKED |
+| Three-layer architecture (Brain -> Knowledge -> Intelligence) | Dr. Sutton's explicit specification | LOCKED |
+| D0 is context, not separate phase | algorithm_spec section 13 | LOCKED |
+| TMNF + TMInterface for deterministic rewind | Pure Sutton compliance: 1 tick/probe, no D0 subtraction, no noise | LOCKED |
+| Research-driven from transcripts | Sutton provides theory, we implement engineering exactly as specified | LOCKED |
 
 ---
 
-## Meeting Transcription Files (For Reference)
+## Meeting Transcription Files
 
-All 6 transcriptions from Dr. Richard Sutton meetings:
-- `archive/meeting_transcripts/meeting_transcript_09_JAn2026.txt` - Foundational architecture
-- `archive/meeting_transcripts/meeting_transcript_15_jan_2026` - Core algorithm
-- `archive/meeting_transcripts/meeting_transcript_24Jan2026.txt` - Config & environment
-- `archive/meeting_transcripts/meeing_transcription_31Jan2026.txt` - Pong deep-dive, multiples
-- `archive/meeting_transcripts/meeting_transcript_31Jan2026.txt` - Graph formation
-- `archive/meeting_transcripts/meeting_transcript_16feb2026.txt` - Noise clarification
+- `archive/meeting_transcripts/meeting_transcript_09_JAn2026.txt` -- Architecture (3 layers, micro-processes)
+- `archive/meeting_transcripts/meeting_transcript_15_jan_2026` -- Core algorithm (sweeps, bins)
+- `archive/meeting_transcripts/meeting_transcript_24Jan2026.txt` -- Config/env (startup, prior knowledge)
+- `archive/meeting_transcripts/meeing_transcription_31Jan2026.txt` -- Pong deep-dive (multiples, precision)
+- `archive/meeting_transcripts/meeting_transcript_31Jan2026.txt` -- Graph formation (planning, pathfinding)
+- `archive/meeting_transcripts/meeting_transcript_16feb2026.txt` -- Noise/steering (no noise, per-frame)
 
 ---
 
-*State updated: 2026-02-22*
-*Phase A: COMPLETE AND VERIFIED (multi-frame probes, action-specific frame counts)*
-*Next: Phase B (Auto-Startup Integration)*
+*State updated: 2026-02-26*
+*Milestone v1.0: Full Sutton Pipeline -- requirements in progress*

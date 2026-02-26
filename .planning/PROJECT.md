@@ -4,8 +4,9 @@
 
 A modular, environment-agnostic intelligent agent system that combines Model Predictive Control and Reinforcement Learning to enable autonomous agents (robots, autonomous vehicles, etc.) to learn from experience while respecting hard safety constraints. Unlike traditional RL that relies on reward signals, this system uses goal-based planning with dynamic constraint intervals, learning what actions affect which state variables, and building multi-layered hierarchical intelligence through knowledge graphs.
 
-**Current Milestone**: Core Research Implementation (Foundation Layer)
-**Target Environments**: TrackMania (current), drones, autonomous vehicles, robotic systems, healthcare systems
+**Current Milestone**: v1.0 Full Sutton Pipeline
+**Target Environments**: TMNF + TMInterface (primary), TM2020 (compat)
+**Nature**: Research implementation -- Dr. Sutton provides theory in meeting transcripts, we implement the engineering exactly as specified
 
 ## Core Value
 
@@ -64,9 +65,40 @@ A modular, environment-agnostic intelligent agent system that combines Model Pre
 
 ## Requirements
 
+## Current Milestone: v1.0 Full Sutton Pipeline
+
+**Goal:** Implement the complete system specified across all 6 Sutton meeting transcripts -- from brain capacity micro-processes through knowledge graphs, exploration, planning, and hierarchical intelligence -- running on TMNF with deterministic rewind.
+
+**What shipped (Phase A):**
+- Bin discovery algorithm (downward sweep, MAX/MIN binary search)
+- Precision discovery (system-measured, not assumed)
+- Deterministic probing via TMNF + TMInterface TCP bridge
+- Gas: 2 bins, Brake: 2 bins, Steering: 201 bins (stable 3/3 runs)
+- 9/9 live rubrics, 12/12 offline tests passing
+
+**Target features (this milestone):**
+- Auto-startup integration (system won't start before bins acquired)
+- Brain capacity micro-processes (send/perform/record action, receive/collect/record feedback, query graph)
+- Per-variable knowledge graphs with no-duplicate-node semantics
+- Per-frame state-action recording across all graphs simultaneously
+- Exploration intelligence (untried action discovery, depth-first search)
+- Awareness (environment state vs internal state comparison)
+- Planning/MPC (pathfinding through graph, goal intervals, dynamic timestep)
+- Hierarchical intelligence (goal composition, multi-level planning)
+- Multiplicity testing (intermediates between MIN and MAX)
+
+**Authoritative sources:**
+- `archive/meeting_transcripts/algorithm_spec_from_meetings.md`
+- `archive/meeting_transcripts/Authoratative_law_from_Jan2026_meetings.md`
+- 6 individual meeting transcripts (Jan 9, 15, 24, 31x2, Feb 16)
+
 ### Validated
 
-(None yet — building to validate)
+- [x] **REQ-01 to REQ-25** from Authoritative Law document (Phase A bin discovery)
+- [x] Precision discovery (REQ-15, REQ-16)
+- [x] Bidirectional steering (REQ-25)
+- [x] Per-frame probing (REQ-01, REQ-03, REQ-21)
+- [x] No noise/no interference (REQ-23, Section 3-4 of spec)
 
 ### Active (Core Implementations Needed)
 
@@ -164,4 +196,4 @@ A modular, environment-agnostic intelligent agent system that combines Model Pre
 
 ---
 
-**Last updated: 2026-02-16 after deep transcription analysis**
+**Last updated: 2026-02-26 -- Milestone v1.0 started (Full Sutton Pipeline)**
