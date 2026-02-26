@@ -35,11 +35,7 @@
     "adapter": "adapters.tmnf_adapter.TMNFAdapter",
     "protocol": "tcp",
     "host": "127.0.0.1",
-    "port": 8476,
-    "timing": {
-      "frame_duration_ms": 10,
-      "description": "TMNF physics tick = 10ms. MUST match environment. Sutton Jan 24: configured not hard-coded."
-    }
+    "port": 8476
   },
 
   "experimentation": {

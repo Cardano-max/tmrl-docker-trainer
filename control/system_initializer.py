@@ -8,21 +8,25 @@ INITIALIZATION SEQUENCE (Sutton Jan 24, 2026):
   "the system won't start before it the experiments"
   "when there is previous knowledge... no need to validate anything"
   "you can print everything to screen like validation started, bins acquired"
+  "who defines the time stamp is the environment"
+  "this needs to be determined by the system so it's being configured not hard-coded"
 
   1. Load config (always)
-  2. Validate config (INIT-01) -- only if no prior knowledge
-  3. Check prior knowledge (INIT-02, INIT-04)
-  4. If no prior knowledge: connect adapter and run bin discovery (INIT-03)
-  5. Print status at each stage (INIT-05)
-  6. Frame duration from config, NEVER hardcoded (INIT-06)
+  2. Validate config (INIT-01)
+  3. Check prior knowledge (INIT-02) — ASK user if they want to use it
+  4. If user says no or no prior knowledge: connect adapter, discover frame
+     duration from environment (INIT-06), run bin discovery (INIT-03)
+  5. If user says yes: load prior knowledge, still need adapter for frame
+     duration discovery (INIT-04, INIT-06)
+  6. Print status at each stage (INIT-05)
 
 INIT REQUIREMENTS:
   INIT-01: Refuse to start if config missing or semantically invalid
-  INIT-02: Detect existing bin discovery results and load them
-  INIT-03: Run bin discovery automatically when no prior knowledge exists
-  INIT-04: When prior knowledge exists, skip experimentation
+  INIT-02: Detect existing bin discovery results on disk
+  INIT-03: Run bin discovery automatically when no prior knowledge
+  INIT-04: When user chooses prior knowledge, load it and skip experimentation
   INIT-05: Print status at each startup stage
-  INIT-06: Frame duration from config (environment.timing.frame_duration_ms)
+  INIT-06: Frame duration DISCOVERED from environment, NEVER hardcoded
 """
 
 import json
@@ -65,27 +69,20 @@ class SystemInitializer:
     Sequence:
       1. Load config
       2. Validate config (INIT-01)
-      3. Check prior knowledge (INIT-02, INIT-04)
-      4. If no prior knowledge: run bin discovery (INIT-03)
-      5. Print status at each stage (INIT-05)
-      6. Frame duration from config (INIT-06)
+      3. Check prior knowledge (INIT-02) — ask user
+      4. Connect adapter (needed for frame duration discovery)
+      5. Discover frame duration from environment (INIT-06)
+      6. If no prior knowledge (or user declines): run bin discovery (INIT-03)
+      7. Print status at each stage (INIT-05)
 
     Sutton quotes:
       "the system won't start before it the experiments"
       "when there is previous knowledge... no need to validate anything"
-      "you can print everything to screen like validation started, bins acquired"
-
-    Usage:
-        # With prior knowledge (offline safe):
-        init = SystemInitializer(config_path="config/tmnf_config.json")
-        result = init.initialize()
-
-        # With pre-built adapter (e.g. for testing):
-        init = SystemInitializer(config_path="...", adapter=my_adapter)
-        result = init.initialize()
+      "who defines the time stamp is the environment"
     """
 
-    def __init__(self, config_path: str = None, adapter=None):
+    def __init__(self, config_path: str = None, adapter=None,
+                 user_input_fn=None):
         """
         Args:
             config_path: Path to JSON config file.
@@ -93,10 +90,15 @@ class SystemInitializer:
             adapter: Pre-created environment adapter (any object with
                      get_feedbacks() and send_action_dict()).
                      If None, the initializer creates a TMNFAdapter from
-                     config when bin discovery is needed.
+                     config when needed.
+            user_input_fn: Function to ask user questions. Signature:
+                          user_input_fn(prompt: str) -> str
+                          Default: built-in input() for interactive use.
+                          Tests can inject a lambda to simulate user responses.
         """
         self.config_path = config_path or DEFAULT_CONFIG_PATH
-        self._injected_adapter = adapter  # Pre-built adapter (tests / live mode)
+        self._injected_adapter = adapter
+        self._user_input = user_input_fn or input
 
         self.config: Optional[Dict] = None
         self.frame_duration_ms: float = 0.0
@@ -105,11 +107,12 @@ class SystemInitializer:
         self.warnings: List[str] = []
 
         self.stages: Dict[str, InitializationStatus] = {
-            'config_load':          InitializationStatus.NOT_STARTED,
-            'config_validation':    InitializationStatus.NOT_STARTED,
+            'config_load':           InitializationStatus.NOT_STARTED,
+            'config_validation':     InitializationStatus.NOT_STARTED,
             'prior_knowledge_check': InitializationStatus.NOT_STARTED,
-            'adapter_connect':      InitializationStatus.NOT_STARTED,
-            'bin_acquisition':      InitializationStatus.NOT_STARTED,
+            'adapter_connect':       InitializationStatus.NOT_STARTED,
+            'frame_duration_discovery': InitializationStatus.NOT_STARTED,
+            'bin_acquisition':       InitializationStatus.NOT_STARTED,
         }
 
     # -------------------------------------------------------------------------
@@ -173,7 +176,7 @@ class SystemInitializer:
             return False
 
     # -------------------------------------------------------------------------
-    # STAGE 2: VALIDATE CONFIG (INIT-01, INIT-06)
+    # STAGE 2: VALIDATE CONFIG (INIT-01)
     # -------------------------------------------------------------------------
 
     def _validate_config(self) -> bool:
@@ -182,9 +185,7 @@ class SystemInitializer:
         Sutton Jan 24: "when you create wrong information on the config
         the system should be able to detect it"
 
-        Also extracts frame_duration_ms (INIT-06).
-
-        Returns False if validation raises or frame_duration_ms missing.
+        Returns False if validation raises.
         """
         self.stages['config_validation'] = InitializationStatus.IN_PROGRESS
         self._print_status("Config validation", "start")
@@ -200,32 +201,27 @@ class SystemInitializer:
             self._print_status("Config validation", "fail", str(e))
             return False
 
-        # Extract frame_duration_ms (INIT-06)
-        # ConfigValidator._validate_environment() already confirmed it exists.
-        self.frame_duration_ms = float(
-            self.config['environment']['timing']['frame_duration_ms']
-        )
-
         actions = self.config.get('actions', {})
         feedbacks = self.config.get('feedbacks', {})
 
         self.stages['config_validation'] = InitializationStatus.COMPLETED
         self._print_status("Config validated", "ok",
-                           f"{len(actions)} actions, {len(feedbacks)} feedbacks, "
-                           f"frame={self.frame_duration_ms:.0f}ms")
+                           f"{len(actions)} actions, {len(feedbacks)} feedbacks")
         return True
 
     # -------------------------------------------------------------------------
-    # STAGE 3: CHECK PRIOR KNOWLEDGE (INIT-02, INIT-04)
+    # STAGE 3: CHECK PRIOR KNOWLEDGE (INIT-02) — ASK USER
     # -------------------------------------------------------------------------
 
     def _check_prior_knowledge(self) -> bool:
-        """Use PriorKnowledgeManager to detect and load saved bin results.
+        """Detect prior knowledge and ASK user if they want to use it.
 
         Sutton Jan 24: "check if there is any graph with information...
         if there is, system starts from there"
 
-        Returns True if prior knowledge found and loaded.
+        But user decides — they may want to re-run experimentation.
+
+        Returns True if prior knowledge found AND user chose to use it.
         """
         self.stages['prior_knowledge_check'] = InitializationStatus.IN_PROGRESS
         self._print_status("Prior knowledge check", "start")
@@ -245,22 +241,42 @@ class SystemInitializer:
 
             if not pk_manager.has_prior_knowledge():
                 self.stages['prior_knowledge_check'] = InitializationStatus.COMPLETED
-                self._print_status("Prior knowledge", "ok", "None found (fresh start)")
+                self._print_status("Prior knowledge", "ok",
+                                   "None found (fresh start)")
                 return False
 
-            # Load and extract bins
+            # Found prior knowledge — show what's available
             data = pk_manager.load_latest()
             if data is None:
                 self.stages['prior_knowledge_check'] = InitializationStatus.COMPLETED
-                self._print_status("Prior knowledge", "ok", "None found (fresh start)")
+                self._print_status("Prior knowledge", "ok",
+                                   "None found (fresh start)")
                 return False
 
-            self.bins = pk_manager.load_bins_from_results(data)
-            action_list = ", ".join(self.bins.keys())
-            self.stages['prior_knowledge_check'] = InitializationStatus.COMPLETED
-            self._print_status("Prior knowledge loaded", "ok",
-                               f"{len(self.bins)} actions ({action_list})")
-            return True
+            bins = pk_manager.load_bins_from_results(data)
+            bin_summary = ", ".join(
+                f"{name}={info.get('bins', '?')} bins"
+                for name, info in bins.items()
+            )
+
+            # ASK the user
+            print()
+            print(f"  Prior knowledge found: {bin_summary}")
+            response = self._user_input(
+                "  Use prior knowledge? (y = use it, n = re-run experimentation): "
+            )
+
+            if response.strip().lower() in ('y', 'yes', ''):
+                self.bins = bins
+                self.stages['prior_knowledge_check'] = InitializationStatus.COMPLETED
+                self._print_status("Prior knowledge loaded", "ok",
+                                   f"{len(self.bins)} actions ({bin_summary})")
+                return True
+            else:
+                self.stages['prior_knowledge_check'] = InitializationStatus.COMPLETED
+                self._print_status("Prior knowledge", "ok",
+                                   "User chose to re-run experimentation")
+                return False
 
         except Exception as e:
             msg = f"Prior knowledge check error: {e}"
@@ -270,7 +286,7 @@ class SystemInitializer:
             return False
 
     # -------------------------------------------------------------------------
-    # STAGE 4: CONNECT ADAPTER (optional -- only when bin discovery needed)
+    # STAGE 4: CONNECT ADAPTER
     # -------------------------------------------------------------------------
 
     def _connect_adapter(self):
@@ -310,7 +326,8 @@ class SystemInitializer:
                 msg = f"Could not connect to TMNF adapter at {host}:{port}"
                 self.errors.append(msg)
                 self.stages['adapter_connect'] = InitializationStatus.FAILED
-                self._print_status("Adapter connect", "fail", "Connection refused")
+                self._print_status("Adapter connect", "fail",
+                                   "Connection refused")
                 return None
 
         except Exception as e:
@@ -321,7 +338,83 @@ class SystemInitializer:
             return None
 
     # -------------------------------------------------------------------------
-    # STAGE 5: ACQUIRE BINS via ExperimentationCoordinator (INIT-03)
+    # STAGE 5: DISCOVER FRAME DURATION FROM ENVIRONMENT (INIT-06)
+    # -------------------------------------------------------------------------
+
+    def _discover_frame_duration(self, adapter) -> bool:
+        """Discover frame duration by measuring the environment.
+
+        Sutton Feb 16: "who defines the time stamp is the environment"
+        Sutton Jan 24: "determined by the system so it's being configured
+                        not hard-coded"
+
+        Method: read race_time, advance one tick, read race_time again.
+        Delta = frame duration in ms.
+
+        Returns True if discovered successfully.
+        """
+        self.stages['frame_duration_discovery'] = InitializationStatus.IN_PROGRESS
+        self._print_status("Frame duration discovery", "start",
+                           "Measuring environment tick rate")
+
+        try:
+            # Read race_time before tick
+            fb_before = adapter.get_feedbacks()
+            race_time_before = fb_before.get('race_time', None)
+
+            if race_time_before is None:
+                msg = "Environment does not report race_time — cannot discover frame duration"
+                self.errors.append(msg)
+                self.stages['frame_duration_discovery'] = InitializationStatus.FAILED
+                self._print_status("Frame duration discovery", "fail",
+                                   "No race_time in feedbacks")
+                return False
+
+            # Advance one tick
+            # Send neutral action so we don't affect the car
+            action_names = list(self.config.get('actions', {}).keys())
+            neutral_action = {name: 0.0 for name in action_names}
+            adapter.send_action_dict(neutral_action)
+            if hasattr(adapter, 'wait_one_tick'):
+                adapter.wait_one_tick()
+            else:
+                time.sleep(0.05)  # fallback for non-TMNF adapters
+
+            # Read race_time after tick
+            fb_after = adapter.get_feedbacks()
+            race_time_after = fb_after.get('race_time', None)
+
+            if race_time_after is None:
+                msg = "race_time disappeared after tick"
+                self.errors.append(msg)
+                self.stages['frame_duration_discovery'] = InitializationStatus.FAILED
+                self._print_status("Frame duration discovery", "fail", msg)
+                return False
+
+            delta_ms = race_time_after - race_time_before
+            if delta_ms <= 0:
+                msg = f"Invalid frame duration: {delta_ms}ms (race_time didn't advance)"
+                self.errors.append(msg)
+                self.stages['frame_duration_discovery'] = InitializationStatus.FAILED
+                self._print_status("Frame duration discovery", "fail", msg)
+                return False
+
+            self.frame_duration_ms = float(delta_ms)
+            self.stages['frame_duration_discovery'] = InitializationStatus.COMPLETED
+            self._print_status("Frame duration discovered", "ok",
+                               f"{self.frame_duration_ms:.0f}ms "
+                               f"(from environment, not hardcoded)")
+            return True
+
+        except Exception as e:
+            msg = f"Frame duration discovery error: {e}"
+            self.errors.append(msg)
+            self.stages['frame_duration_discovery'] = InitializationStatus.FAILED
+            self._print_status("Frame duration discovery", "fail", str(e))
+            return False
+
+    # -------------------------------------------------------------------------
+    # STAGE 6: ACQUIRE BINS via ExperimentationCoordinator (INIT-03)
     # -------------------------------------------------------------------------
 
     def _acquire_bins(self, adapter) -> bool:
@@ -331,7 +424,7 @@ class SystemInitializer:
 
         wait_fn: uses adapter.wait_one_tick if available (TMNF TCP sync),
                  falls back to time.sleep for non-TMNF adapters.
-        frame_duration_ms always from config (INIT-06).
+        frame_duration_ms discovered from environment (INIT-06).
 
         Returns True if discovery completed successfully.
         """
@@ -346,11 +439,14 @@ class SystemInitializer:
 
             # Use adapter.wait_one_tick if available (TMNF TCP sync requirement).
             # Fall back to time.sleep for adapters that don't have it.
-            wait_fn = getattr(
-                adapter,
-                'wait_one_tick',
-                lambda: time.sleep(frame_duration_s)
-            )
+            # NOTE: ExperimentationCoordinator calls wait_fn(frame_duration_s)
+            # with one arg, but adapter.wait_one_tick() takes zero args.
+            # Wrap it to accept and ignore the duration argument.
+            raw_wait = getattr(adapter, 'wait_one_tick', None)
+            if raw_wait is not None:
+                wait_fn = lambda _duration, _w=raw_wait: _w()
+            else:
+                wait_fn = lambda duration: time.sleep(duration)
 
             coordinator = ExperimentationCoordinator(
                 actions_config=self.config['actions'],
@@ -421,7 +517,8 @@ class SystemInitializer:
         print()
         print("=" * 60)
         print("SYSTEM READY")
-        print(f"  Frame duration : {self.frame_duration_ms:.0f}ms")
+        print(f"  Frame duration : {self.frame_duration_ms:.0f}ms "
+              f"(discovered from environment)")
         print(f"  Bins source    : {source}")
         for action_name, info in self.bins.items():
             n = info.get('bins', '?')
@@ -464,32 +561,44 @@ class SystemInitializer:
         if not self._load_config():
             return self._fail_result()
 
-        # Stage 2: Validate config (INIT-01, INIT-06)
-        # Note: Sutton says "when there is previous knowledge no need to
-        # validate anything" -- but we always load config for frame_duration_ms.
-        # We only skip action/feedback validation if prior knowledge exists.
-        # So: validate config FIRST (before checking prior knowledge).
+        # Stage 2: Validate config (INIT-01)
         if not self._validate_config():
             return self._fail_result()
 
-        # Stage 3: Check prior knowledge (INIT-02, INIT-04)
+        # Stage 3: Check prior knowledge (INIT-02) — asks user
         has_prior = self._check_prior_knowledge()
 
-        if has_prior:
-            # INIT-04: Prior knowledge loaded, skip experimentation entirely
-            self.stages['adapter_connect'] = InitializationStatus.SKIPPED
-            self.stages['bin_acquisition'] = InitializationStatus.SKIPPED
-            self._print_status("Prior knowledge loaded", "ok",
-                               "Skipping bin discovery")
+        # We always need the adapter for frame duration discovery (INIT-06)
+        # unless we're in offline-only mode (no adapter, prior knowledge only)
+        adapter = self._connect_adapter()
+
+        if adapter is not None:
+            # Stage 5: Discover frame duration from environment (INIT-06)
+            # Sutton: "who defines the time stamp is the environment"
+            if not self._discover_frame_duration(adapter):
+                return self._fail_result()
         else:
-            # INIT-03: Must acquire bins before system can operate
-            adapter = self._connect_adapter()
-            if adapter is None:
+            # No adapter available
+            if has_prior:
+                # Offline mode with prior knowledge — can't discover frame
+                # duration without environment. Skip it.
+                self.stages['frame_duration_discovery'] = InitializationStatus.SKIPPED
+                self._print_status("Frame duration discovery", "skip",
+                                   "No adapter (offline mode)")
+            else:
+                # No prior knowledge AND no adapter = can't proceed
                 self._print_status("Bin acquisition", "fail",
                                    "No adapter (is the game running?)")
                 self.stages['bin_acquisition'] = InitializationStatus.FAILED
                 return self._fail_result()
 
+        if has_prior:
+            # INIT-04: User chose prior knowledge, skip experimentation
+            self.stages['bin_acquisition'] = InitializationStatus.SKIPPED
+            self._print_status("Bin acquisition", "skip",
+                               "Using prior knowledge (user choice)")
+        else:
+            # INIT-03: Must acquire bins before system can operate
             if not self._acquire_bins(adapter):
                 return self._fail_result()
 
@@ -520,5 +629,5 @@ class SystemInitializer:
         return self.bins
 
     def get_frame_duration_ms(self) -> float:
-        """Return frame duration in milliseconds (from config)."""
+        """Return frame duration in ms (discovered from environment)."""
         return self.frame_duration_ms

@@ -5,14 +5,12 @@ Verifies all six INIT requirements without a running game, FalkorDB, or
 any external service.
 
 Requirements covered:
-  INIT-01 (test_init_rejects_missing_config_file, test_init_rejects_invalid_config,
-            test_init_rejects_missing_frame_duration)
-  INIT-02 (test_init_loads_prior_knowledge)
+  INIT-01 (test_init_rejects_missing_config_file, test_init_rejects_invalid_config)
+  INIT-02 (test_init_detects_prior_knowledge)
   INIT-03 (test_init_runs_discovery_without_prior)
-  INIT-04 (test_init_skips_experimentation_with_prior)
+  INIT-04 (test_init_user_accepts_prior_knowledge, test_init_user_declines_prior_knowledge)
   INIT-05 (test_init_prints_status_messages)
-  INIT-06 (test_init_rejects_missing_frame_duration,
-            test_init_frame_duration_from_config)
+  INIT-06 (test_init_discovers_frame_duration_from_adapter)
 """
 
 import json
@@ -32,7 +30,8 @@ from control.system_initializer import SystemInitializer, InitializationResult
 class MockAdapter:
     """Fake adapter for offline testing.
 
-    Has wait_one_tick() so SystemInitializer uses it instead of time.sleep.
+    Simulates TMNF adapter with race_time that advances 10ms per tick
+    (so frame duration discovery measures 10ms).
     """
 
     def __init__(self):
@@ -48,16 +47,15 @@ class MockAdapter:
 
     def get_feedbacks(self):
         return {
-            'speed':    self._speed,
-            'pos_x':    0.0,
-            'pos_y':    0.0,
-            'pos_z':    0.0,
-            'yaw':      0.0,
+            'speed':     self._speed,
+            'pos_x':     0.0,
+            'pos_y':     0.0,
+            'pos_z':     0.0,
+            'yaw':       0.0,
             'race_time': float(self._tick * 10),
         }
 
     def send_action_dict(self, action):
-        # Simulate: gas increases speed, brake decreases
         if action.get('gas', 0) > 0:
             self._speed += 5.0
         if action.get('brake', 0) > 0:
@@ -77,17 +75,12 @@ class MockAdapter:
         pass
 
 
-def make_test_config(tmp_path, frame_duration_ms=10, results_dir=None,
-                     include_timing=True):
+def make_test_config(tmp_path, results_dir=None):
     """Create a valid TMNF config JSON file in tmp_path.
 
-    Args:
-        tmp_path: pytest tmp_path fixture.
-        frame_duration_ms: value for environment.timing.frame_duration_ms.
-        results_dir: override prior_knowledge.results_dir (defaults to tmp_path).
-        include_timing: if False, omit environment.timing entirely (for INIT-06 tests).
+    No frame_duration_ms — it's discovered from environment, not config.
     """
-    config: dict = {
+    config = {
         "system_name": "test",
         "version": "1.0.0",
         "actions": {
@@ -97,8 +90,8 @@ def make_test_config(tmp_path, frame_duration_ms=10, results_dir=None,
         },
         "feedbacks": {
             "speed": {
-                "description":  "speed",
-                "unit":         "km/h",
+                "description":   "speed",
+                "unit":          "km/h",
                 "interval_size": 5.0,
                 "expected_range": [0.0, 500.0],
             }
@@ -110,19 +103,16 @@ def make_test_config(tmp_path, frame_duration_ms=10, results_dir=None,
         },
         "prior_knowledge": {
             "check_on_startup": True,
-            "results_dir":     str(results_dir or tmp_path),
-            "results_pattern": "tmnf_phase_a_results_*.json",
+            "results_dir":      str(results_dir or tmp_path),
+            "results_pattern":  "tmnf_phase_a_results_*.json",
         },
         "experimentation": {
-            "enabled":           True,
-            "search_precision":  0.001,
+            "enabled":            True,
+            "search_precision":   0.001,
             "min_probe_speed_kmh": 10.0,
-            "use_rewind":        True,
+            "use_rewind":         True,
         },
     }
-
-    if include_timing:
-        config["environment"]["timing"] = {"frame_duration_ms": frame_duration_ms}
 
     config_path = tmp_path / "test_config.json"
     config_path.write_text(json.dumps(config, indent=2))
@@ -130,45 +120,30 @@ def make_test_config(tmp_path, frame_duration_ms=10, results_dir=None,
 
 
 def make_fake_prior_knowledge(results_dir):
-    """Write a fake tmnf_phase_a_results_*.json file in results_dir.
-
-    Returns the path to the created file.
-    """
+    """Write a fake tmnf_phase_a_results_*.json file in results_dir."""
     data = {
         "timestamp": "20260225_150000",
         "environment": "TMNF",
         "results": {
             "gas": {
-                "max": 1.0,
-                "min": 0.001,
-                "bins": 2,
-                "delta_max": 5.0,
-                "delta_0": 0.0,
-                "input_type": "binary",
+                "max": 1.0, "min": 0.001, "bins": 2,
+                "delta_max": 5.0, "delta_0": 0.0, "input_type": "binary",
                 "bin_details": [
                     {"id": 0, "min": 0.0, "max": 0.001, "label": "DEAD_ZONE"},
                     {"id": 1, "min": 0.001, "max": 1.0,  "label": "ON"},
                 ],
             },
             "brake": {
-                "max": 1.0,
-                "min": 0.001,
-                "bins": 2,
-                "delta_max": -3.0,
-                "delta_0": 0.0,
-                "input_type": "binary",
+                "max": 1.0, "min": 0.001, "bins": 2,
+                "delta_max": -3.0, "delta_0": 0.0, "input_type": "binary",
                 "bin_details": [
                     {"id": 0, "min": 0.0, "max": 0.001, "label": "DEAD_ZONE"},
                     {"id": 1, "min": 0.001, "max": 1.0,  "label": "ON"},
                 ],
             },
             "steering": {
-                "max": 1.0,
-                "min": 0.01,
-                "bins": 201,
-                "delta_max": 0.05,
-                "delta_0": 0.0,
-                "input_type": "analog",
+                "max": 1.0, "min": 0.01, "bins": 201,
+                "delta_max": 0.05, "delta_0": 0.0, "input_type": "analog",
                 "precision": 0.005,
                 "bin_details": [
                     {"id": 0, "min": -0.01, "max": 0.01, "label": "STRAIGHT"},
@@ -195,9 +170,7 @@ def test_init_rejects_missing_config_file(tmp_path):
     result = init.initialize()
 
     assert result.success is False
-    assert any("Config file not found" in e or "not found" in e.lower()
-               for e in result.errors), \
-        f"Expected 'file not found' error but got: {result.errors}"
+    assert any("not found" in e.lower() for e in result.errors)
 
 
 def test_init_rejects_invalid_json(tmp_path):
@@ -208,106 +181,59 @@ def test_init_rejects_invalid_json(tmp_path):
     result = init.initialize()
 
     assert result.success is False
-    assert any("Invalid JSON" in e or "json" in e.lower()
-               for e in result.errors), \
-        f"Expected JSON error but got: {result.errors}"
+    assert any("json" in e.lower() for e in result.errors)
 
 
 def test_init_rejects_invalid_config(tmp_path):
-    """INIT-01: System refuses to start when config is semantically invalid.
-
-    Config is valid JSON but missing required keys (no actions).
-    """
-    bad_config = {
-        "system_name": "test",
-        "version": "1.0.0",
-        # Missing 'actions', 'feedbacks', 'environment'
-    }
+    """INIT-01: System refuses to start when config is semantically invalid."""
+    bad_config = {"system_name": "test", "version": "1.0.0"}
     cfg_path = tmp_path / "bad_config.json"
     cfg_path.write_text(json.dumps(bad_config))
     init = SystemInitializer(config_path=str(cfg_path))
     result = init.initialize()
 
     assert result.success is False
-    assert result.errors, "Expected at least one error for invalid config"
+    assert result.errors
 
 
 # =============================================================================
-# INIT-06 TEST: frame_duration_ms must come from config
+# INIT-02 / INIT-04 TESTS: Prior knowledge — user choice
 # =============================================================================
 
 
-def test_init_rejects_missing_frame_duration(tmp_path):
-    """INIT-06: System refuses to start when frame_duration_ms is missing.
+def test_init_user_accepts_prior_knowledge(tmp_path):
+    """INIT-02 + INIT-04: Prior knowledge found, user says yes.
 
-    Sutton Jan 24: frame duration must be configured, not hard-coded.
-    """
-    config_path = make_test_config(tmp_path, include_timing=False)
-    init = SystemInitializer(config_path=config_path)
-    result = init.initialize()
-
-    assert result.success is False
-    assert result.errors, "Expected validation error for missing frame_duration_ms"
-
-
-# =============================================================================
-# INIT-02 / INIT-04 TESTS: Prior knowledge detection and loading
-# =============================================================================
-
-
-def test_init_loads_prior_knowledge(tmp_path):
-    """INIT-02: System detects and loads existing bin discovery results.
-
-    INIT-04: When prior knowledge exists, experimentation is skipped.
-    No adapter connection attempted.
+    System loads bins, skips experimentation.
     """
     make_fake_prior_knowledge(tmp_path)
     config_path = make_test_config(tmp_path, results_dir=tmp_path)
 
-    init = SystemInitializer(config_path=config_path)
+    # User says "y" — use prior knowledge
+    # Adapter still needed for frame duration discovery
+    mock_adapter = MockAdapter()
+    init = SystemInitializer(
+        config_path=config_path,
+        adapter=mock_adapter,
+        user_input_fn=lambda prompt: "y",
+    )
     result = init.initialize()
 
-    assert result.success is True, \
-        f"Expected success with prior knowledge but got errors: {result.errors}"
-    assert result.has_prior_knowledge is True, \
-        "Expected has_prior_knowledge=True"
-    assert result.bins_acquired, \
-        "Expected bins_acquired to be non-empty"
-    assert 'gas' in result.bins_acquired, \
-        "Expected 'gas' action in bins_acquired"
-
-
-def test_init_skips_experimentation_with_prior(tmp_path):
-    """INIT-04: When prior knowledge exists, bin acquisition stage is SKIPPED.
-
-    Sutton: 'when there is previous knowledge... no need to validate anything'
-    """
-    make_fake_prior_knowledge(tmp_path)
-    config_path = make_test_config(tmp_path, results_dir=tmp_path)
-
-    init = SystemInitializer(config_path=config_path)
-    result = init.initialize()
+    assert result.success is True
+    assert result.has_prior_knowledge is True
+    assert 'gas' in result.bins_acquired
+    assert result.bins_acquired['gas']['bins'] == 2
 
     from control.system_initializer import InitializationStatus
-    assert result.stages.get('bin_acquisition') == InitializationStatus.SKIPPED, \
-        f"Expected bin_acquisition=SKIPPED but got: {result.stages.get('bin_acquisition')}"
-    assert result.stages.get('adapter_connect') == InitializationStatus.SKIPPED, \
-        f"Expected adapter_connect=SKIPPED but got: {result.stages.get('adapter_connect')}"
+    assert result.stages['bin_acquisition'] == InitializationStatus.SKIPPED
 
 
-# =============================================================================
-# INIT-03 TEST: Bin discovery runs when no prior knowledge
-# =============================================================================
+def test_init_user_declines_prior_knowledge(tmp_path):
+    """INIT-04: Prior knowledge found, user says no.
 
-
-def test_init_runs_discovery_without_prior(tmp_path):
-    """INIT-03: System runs bin discovery when no prior knowledge exists.
-
-    Tests WIRING: patches ExperimentationCoordinator (via control.system_initializer
-    import path) so we verify SystemInitializer calls it, without running the real
-    algorithm (which needs a live game).
+    System re-runs experimentation (mocked).
     """
-    # Empty results dir -- no prior knowledge
+    make_fake_prior_knowledge(tmp_path)
     config_path = make_test_config(tmp_path, results_dir=tmp_path)
     mock_adapter = MockAdapter()
 
@@ -321,18 +247,111 @@ def test_init_runs_discovery_without_prior(tmp_path):
         return r
 
     fake_bins = {
-        'gas':   [{'bin_id': 0, 'min': 0.0,   'max': 0.001, 'label': 'DEAD_ZONE',
+        'gas':   [{'bin_id': 0, 'min': 0.0, 'max': 0.001, 'label': 'DEAD_ZONE',
                    'effect_delta': 0.0},
-                  {'bin_id': 1, 'min': 0.001, 'max': 1.0,   'label': 'ON',
+                  {'bin_id': 1, 'min': 0.001, 'max': 1.0, 'label': 'ON',
                    'effect_delta': 5.0}],
-        'brake': [{'bin_id': 0, 'min': 0.0,   'max': 0.001, 'label': 'DEAD_ZONE',
+    }
+
+    mock_coordinator = MagicMock()
+    mock_coordinator.run_full_experimentation.return_value = fake_bins
+    mock_coordinator.intelligence.discovery_results = {
+        'gas': make_fake_result('gas'),
+    }
+
+    # User says "n" — re-run experimentation
+    with patch(
+        'intelligence.intelligence_experimentation.ExperimentationCoordinator',
+        return_value=mock_coordinator,
+    ):
+        init = SystemInitializer(
+            config_path=config_path,
+            adapter=mock_adapter,
+            user_input_fn=lambda prompt: "n",
+        )
+        result = init.initialize()
+
+    assert result.success is True
+    assert result.has_prior_knowledge is False
+    mock_coordinator.run_full_experimentation.assert_called_once()
+
+
+def test_init_no_prior_knowledge_skips_question(tmp_path):
+    """INIT-02: When no prior knowledge exists, user is NOT asked."""
+    # Empty dir — no results files
+    config_path = make_test_config(tmp_path, results_dir=tmp_path)
+    mock_adapter = MockAdapter()
+
+    # If user_input_fn is called, it means we asked when we shouldn't have
+    asked = []
+
+    def fail_if_asked(prompt):
+        asked.append(prompt)
+        return "y"
+
+    from intelligence.intelligence_experimentation import ActionDiscoveryResult
+
+    def make_fake_result(name):
+        r = ActionDiscoveryResult(action_name=name)
+        r.success = True
+        r.a_min_effective = 0.001
+        r.a_max_effective = 1.0
+        return r
+
+    mock_coordinator = MagicMock()
+    mock_coordinator.run_full_experimentation.return_value = {
+        'gas': [{'bin_id': 0, 'min': 0.0, 'max': 1.0, 'label': 'ON',
+                 'effect_delta': 5.0}],
+    }
+    mock_coordinator.intelligence.discovery_results = {
+        'gas': make_fake_result('gas'),
+    }
+
+    with patch(
+        'intelligence.intelligence_experimentation.ExperimentationCoordinator',
+        return_value=mock_coordinator,
+    ):
+        init = SystemInitializer(
+            config_path=config_path,
+            adapter=mock_adapter,
+            user_input_fn=fail_if_asked,
+        )
+        result = init.initialize()
+
+    assert result.success is True
+    assert len(asked) == 0, f"User was asked even though no prior knowledge: {asked}"
+
+
+# =============================================================================
+# INIT-03 TEST: Bin discovery runs when no prior knowledge
+# =============================================================================
+
+
+def test_init_runs_discovery_without_prior(tmp_path):
+    """INIT-03: System runs bin discovery when no prior knowledge exists."""
+    config_path = make_test_config(tmp_path, results_dir=tmp_path)
+    mock_adapter = MockAdapter()
+
+    from intelligence.intelligence_experimentation import ActionDiscoveryResult
+
+    def make_fake_result(name):
+        r = ActionDiscoveryResult(action_name=name)
+        r.success = True
+        r.a_min_effective = 0.001
+        r.a_max_effective = 1.0
+        return r
+
+    fake_bins = {
+        'gas':   [{'bin_id': 0, 'min': 0.0, 'max': 0.001, 'label': 'DEAD_ZONE',
                    'effect_delta': 0.0},
-                  {'bin_id': 1, 'min': 0.001, 'max': 1.0,   'label': 'ON',
+                  {'bin_id': 1, 'min': 0.001, 'max': 1.0, 'label': 'ON',
+                   'effect_delta': 5.0}],
+        'brake': [{'bin_id': 0, 'min': 0.0, 'max': 0.001, 'label': 'DEAD_ZONE',
+                   'effect_delta': 0.0},
+                  {'bin_id': 1, 'min': 0.001, 'max': 1.0, 'label': 'ON',
                    'effect_delta': -3.0}],
     }
 
-    # Build a mock coordinator whose run_full_experimentation returns fake_bins
-    # and whose .intelligence.discovery_results has ActionDiscoveryResult objects.
     mock_coordinator = MagicMock()
     mock_coordinator.run_full_experimentation.return_value = fake_bins
     mock_coordinator.intelligence.discovery_results = {
@@ -340,7 +359,6 @@ def test_init_runs_discovery_without_prior(tmp_path):
         'brake': make_fake_result('brake'),
     }
 
-    # Patch ExperimentationCoordinator where it's imported inside _acquire_bins
     with patch(
         'intelligence.intelligence_experimentation.ExperimentationCoordinator',
         return_value=mock_coordinator,
@@ -348,14 +366,11 @@ def test_init_runs_discovery_without_prior(tmp_path):
         init = SystemInitializer(config_path=config_path, adapter=mock_adapter)
         result = init.initialize()
 
-    # Verify the coordinator was instantiated and discovery was called
     MockCoordinatorClass.assert_called_once()
     mock_coordinator.run_full_experimentation.assert_called_once()
 
-    assert result.success is True, \
-        f"Expected success after discovery but got errors: {result.errors}"
-    assert result.has_prior_knowledge is False, \
-        "Expected has_prior_knowledge=False (bins came from discovery, not prior)"
+    assert result.success is True
+    assert result.has_prior_knowledge is False
 
 
 # =============================================================================
@@ -364,48 +379,70 @@ def test_init_runs_discovery_without_prior(tmp_path):
 
 
 def test_init_prints_status_messages(capsys, tmp_path):
-    """INIT-05: System prints status at each startup stage.
-
-    Sutton: 'you can print everything to screen like validation started,
-    bins acquired'
-    """
+    """INIT-05: System prints status at each startup stage."""
     make_fake_prior_knowledge(tmp_path)
     config_path = make_test_config(tmp_path, results_dir=tmp_path)
+    mock_adapter = MockAdapter()
 
-    init = SystemInitializer(config_path=config_path)
+    init = SystemInitializer(
+        config_path=config_path,
+        adapter=mock_adapter,
+        user_input_fn=lambda prompt: "y",
+    )
     init.initialize()
 
     captured = capsys.readouterr()
     output = captured.out
 
-    assert "SYSTEM INITIALIZATION" in output, \
-        "Expected 'SYSTEM INITIALIZATION' in output"
-    assert "Config" in output, \
-        "Expected config status message in output"
-    assert "Prior knowledge" in output, \
-        "Expected prior knowledge status message in output"
-    assert "SYSTEM READY" in output, \
-        "Expected 'SYSTEM READY' final status in output"
+    assert "SYSTEM INITIALIZATION" in output
+    assert "Config" in output
+    assert "Prior knowledge" in output
+    assert "SYSTEM READY" in output
 
 
 # =============================================================================
-# INIT-06 TEST: frame_duration_ms from config
+# INIT-06 TEST: Frame duration DISCOVERED from environment
 # =============================================================================
 
 
-def test_init_frame_duration_from_config(tmp_path):
-    """INIT-06: frame_duration_ms is read from config, not hardcoded.
+def test_init_discovers_frame_duration_from_adapter(tmp_path):
+    """INIT-06: Frame duration is discovered from environment, not hardcoded.
 
-    Sutton Jan 24: 'this needs to be determined by the system so it's being
-    configured not hard-coded'
+    Sutton: "who defines the time stamp is the environment"
+    Sutton: "determined by the system so it's being configured not hard-coded"
+
+    MockAdapter's race_time advances 10ms per tick, so discovery should
+    measure 10ms.
     """
     make_fake_prior_knowledge(tmp_path)
-    config_path = make_test_config(tmp_path, frame_duration_ms=10,
-                                   results_dir=tmp_path)
+    config_path = make_test_config(tmp_path, results_dir=tmp_path)
+    mock_adapter = MockAdapter()
 
-    init = SystemInitializer(config_path=config_path)
+    init = SystemInitializer(
+        config_path=config_path,
+        adapter=mock_adapter,
+        user_input_fn=lambda prompt: "y",
+    )
     result = init.initialize()
 
     assert result.success is True
     assert result.frame_duration_ms == 10.0, \
-        f"Expected frame_duration_ms=10.0 but got {result.frame_duration_ms}"
+        f"Expected 10ms (from MockAdapter race_time delta), got {result.frame_duration_ms}"
+
+    from control.system_initializer import InitializationStatus
+    assert result.stages['frame_duration_discovery'] == InitializationStatus.COMPLETED
+
+
+def test_init_frame_duration_not_in_config(tmp_path):
+    """INIT-06: Config does NOT contain frame_duration_ms — it's discovered."""
+    config_path = make_test_config(tmp_path, results_dir=tmp_path)
+    with open(config_path) as f:
+        config = json.load(f)
+
+    # Verify config has no frame_duration_ms anywhere
+    env = config.get('environment', {})
+    timing = env.get('timing', {})
+    assert 'frame_duration_ms' not in timing, \
+        "Config should NOT contain frame_duration_ms — it's discovered from environment"
+    assert 'frame_duration_ms' not in env, \
+        "Config should NOT contain frame_duration_ms"

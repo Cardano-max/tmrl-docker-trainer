@@ -3,7 +3,7 @@ Input Validators
 Ensures all inputs are valid before processing
 
 Updated: Added numpy type support for TMRL compatibility
-Updated: TMNF support -- bins optional (discovered at runtime), environment timing required
+Updated: TMNF support -- bins optional (discovered at runtime), frame duration discovered from environment
 """
 
 import logging
@@ -189,24 +189,15 @@ class ConfigValidator:
         """
         Validate environment configuration.
 
-        Enforces INIT-06: frame_duration_ms must exist and be a positive number.
+        Checks environment has required connection info.
+        Frame duration is NOT validated here — it is DISCOVERED from the
+        environment at runtime (Sutton: "who defines the time stamp is
+        the environment", "determined by the system not hard-coded").
         """
-        if 'timing' not in environment:
-            raise ValidationError("environment missing 'timing' section")
-
-        timing = environment['timing']
-        if 'frame_duration_ms' not in timing:
-            raise ValidationError("environment.timing missing 'frame_duration_ms'")
-
-        frame_duration = timing['frame_duration_ms']
-        if not is_numeric(frame_duration):
-            raise ValidationError(
-                f"environment.timing.frame_duration_ms must be numeric, got: {type(frame_duration)}"
-            )
-        if float(frame_duration) <= 0:
-            raise ValidationError(
-                f"environment.timing.frame_duration_ms must be > 0, got: {frame_duration}"
-            )
+        # environment section must exist (checked by validate_config),
+        # but its contents are flexible — host/port/type are optional
+        # since different adapters have different needs.
+        pass
 
     @staticmethod
     def _validate_system_config(system_config: Dict[str, Any]):
