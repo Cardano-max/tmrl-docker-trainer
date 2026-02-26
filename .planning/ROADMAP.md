@@ -1,506 +1,172 @@
-# Roadmap: Intelligent Agent Architecture (MPC-RL Hybrid)
+# Roadmap: v1.0 Full Sutton Pipeline
 
-**Created:** 2026-02-16
-**Total Phases:** 7 research phases + 1 deployment phase
-**Requirements Mapped:** 76/76 (100% coverage)
-**Approach:** Modular, component-by-component (per Dr. Sutton guidance)
+## Overview
 
----
+Implement the complete intelligent agent architecture specified across 6 Dr. Sutton meeting transcripts -- from system initialization and brain capacity micro-processes through knowledge graphs, exploration, planning, and hierarchical intelligence -- running on TMNF with deterministic rewind. Phase A (bin discovery) is already complete; this roadmap covers the 49 remaining requirements that build the full pipeline on top of that foundation.
 
-## Phase Structure Overview
+## Phases
 
-| # | Phase | Focus | Requirements | Success Criteria |
-|---|-------|-------|--------------|------------------|
-| 1 | Configuration & State Foundation | Brain capacity: config + state tracking | CONFIG-01 to STATE-06 | Config system reads JSON, state tracker maintains history |
-| 2 | Knowledge Graph Infrastructure | Brain capacity: graph creation + recording | ACTION-01 to MEMORY-04 | Graphs populate with state-action transitions, queries work |
-| 3 | Exploration Intelligence | First intelligence: search untried actions | EXPLORE-01 to REPEAT-03 | System explores graph depth-first, repeats episodes |
-| 4 | Planning Intelligence | Second intelligence: find paths to goals | PLAN-01 to DCONST-04 | System plans sequences respecting constraints, finds paths |
-| 5 | Hierarchical Control | Third intelligence: compose goals hierarchically | HIER-01 to HIER-04 | System handles multi-level goals, solves vacuum robot analogy |
-| 6 | Safety & Production | Hardening: constraints, performance, monitoring | SAFETY-01 to PROD-05 | Hard constraints never violated, <100ms queries, logging works |
-| 7 | Integration & Validation | End-to-end testing, cross-environment | All v1+v2 validated | TrackMania + Drone + Robot all work with same code |
+**Phase Numbering:**
+- Integer phases (1, 2, 3): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
----
+Decimal phases appear between their surrounding integers in numeric order.
 
-## Phase 1: Configuration & State Foundation
+- [ ] **Phase 1: System Initialization** - Config validation, prior knowledge loading, auto bin discovery on startup
+- [ ] **Phase 2: Brain Capacity Micro-Processes** - Send/perform/record action, receive/collect/record feedback, query graph, compare state
+- [ ] **Phase 3: Knowledge Graph Infrastructure** - Per-variable graphs with no-duplicate nodes, per-frame recording, multiplicity testing
+- [ ] **Phase 4: Exploration and Awareness** - Untried action discovery, depth-first search, episode loop, repetition, state comparison
+- [ ] **Phase 5: Planning / MPC** - Goal intervals, pathfinding through graph, multi-frame chaining, dynamic timestep, constraints
+- [ ] **Phase 6: Hierarchical Intelligence** - Goal composition, decomposition, multi-level planning, inter-level communication
 
-**Goal:** Build infrastructure for environment-agnostic configuration and frame-by-frame state tracking
+## Phase Details
 
-**Requirements Mapped:**
-- CONFIG-01, CONFIG-02, CONFIG-03, CONFIG-04, CONFIG-05
-- STATE-01 through STATE-06
+### Phase 1: System Initialization
+**Goal**: System boots correctly -- validates config, detects prior knowledge, runs bin discovery if needed, and reports status before any intelligence begins
+**Depends on**: Phase A complete (bin discovery algorithm exists)
+**Requirements**: INIT-01, INIT-02, INIT-03, INIT-04, INIT-05, INIT-06
+**Success Criteria** (what must be TRUE):
+  1. System refuses to start if config is invalid or incomplete (validation catches bad configs)
+  2. System detects existing knowledge graphs on disk and loads them without re-running experimentation
+  3. System automatically runs bin discovery when no prior knowledge exists, then proceeds
+  4. System prints clear status messages at each startup stage (validation, bins, graphs, ready)
+  5. Frame duration is read from environment config, never hardcoded
+**Plans**: TBD
 
-**Deliverables:**
+Plans:
+- [ ] 01-01: TBD
+- [ ] 01-02: TBD
 
-1. **Configuration Schema** (schema.json)
-   - Action definitions: name, bin ranges, constraints (hard/soft)
-   - Feedback definitions: name, unit, type (input or derived)
-   - Discretization strategy: how to create bins
-   - Constraint definitions: limits and thresholds
+### Phase 2: Brain Capacity Micro-Processes
+**Goal**: The six micro-processes from Jan 9 meeting work as small, generic, composable building blocks that intelligence modules orchestrate
+**Depends on**: Phase 1 (system initialized, config loaded, bins available)
+**Requirements**: BRAIN-01, BRAIN-02, BRAIN-03, BRAIN-04, BRAIN-05, BRAIN-06, BRAIN-07, BRAIN-08, BRAIN-09, BRAIN-10
+**Success Criteria** (what must be TRUE):
+  1. System sends an action to TMNF and the environment executes it for exactly one frame
+  2. System receives feedback (all state variables) from TMNF after each frame
+  3. System records every action sent and every feedback received (retrievable history)
+  4. System queries the knowledge graph for any node, edge, or relationship and gets correct results
+  5. Each micro-process is a standalone function that intelligence modules compose (not monolithic)
+**Plans**: TBD
 
-2. **Configuration Loader Module**
-   - Read JSON config file
-   - Validate completeness and consistency
-   - Generate action combinations (product of all bins)
-   - Parse feedback types
+Plans:
+- [ ] 02-01: TBD
+- [ ] 02-02: TBD
+- [ ] 02-03: TBD
 
-3. **State Manager Class**
-   - Store current state as dict: `{position: 42.5, velocity: 15.3, ...}`
-   - Maintain previous state pointer
-   - Keep history buffer (ring buffer, size configurable)
-   - Track frame count and system timestamp
-   - Detect state discontinuities (position jump = teleport)
-   - Convert state dict to hash for comparison
+### Phase 3: Knowledge Graph Infrastructure
+**Goal**: Per-variable knowledge graphs populate correctly with state-action transitions, enforce no-duplicate-node semantics, and support per-frame simultaneous recording across all variables
+**Depends on**: Phase 2 (micro-processes can send/receive/record)
+**Requirements**: GRAPH-01, GRAPH-02, GRAPH-03, GRAPH-04, GRAPH-05, GRAPH-06, GRAPH-07, GRAPH-08, GRAPH-09, GRAPH-10, GRAPH-11, GRAPH-12
+**Success Criteria** (what must be TRUE):
+  1. Each feedback variable has its own graph, and all graphs update simultaneously on every frame
+  2. Returning to a previously visited state reuses the existing node (no duplicate nodes ever created)
+  3. Graph stores action bins as edge labels (not raw continuous values), and same node reachable via different actions shows multiple edges
+  4. Multiplicity testing validates intermediate action values between MIN and MAX experimentally (not assumed linear)
+  5. State resolution matches system precision from bin discovery -- unreachable states have no nodes
+**Plans**: TBD
 
-4. **Test Configuration Files**
-   - TrackMania config: 4 actions (gas, brake, left, right), 14 feedbacks
-   - Minimal test config: 2 actions, 2 feedbacks
+Plans:
+- [ ] 03-01: TBD
+- [ ] 03-02: TBD
+- [ ] 03-03: TBD
 
-**Success Criteria:**
-- ✓ JSON config loads without errors
-- ✓ Config validation catches missing fields
-- ✓ Action combinations generated correctly (e.g., 4 actions × 4 bins each = 256 combinations)
-- ✓ State manager tracks current/previous/history
-- ✓ State hash is consistent across identical states
-- ✓ Discontinuity detected when state jumps
-- ✓ System works identically with different configs (TrackMania vs minimal)
+### Phase 4: Exploration and Awareness
+**Goal**: System systematically explores untried actions at each state node, records results across all graphs, replays successful trajectories, and detects discrepancies between environment state and internal graph state
+**Depends on**: Phase 3 (knowledge graphs exist and can be populated/queried)
+**Requirements**: EXPLORE-01, EXPLORE-02, EXPLORE-03, EXPLORE-04, EXPLORE-05, EXPLORE-06, AWARE-01, AWARE-02, AWARE-03
+**Success Criteria** (what must be TRUE):
+  1. At any state node, system identifies which action combinations have been tried and which remain untried
+  2. System performs untried actions depth-first and records results in all graphs simultaneously
+  3. System runs exploration episodes (start, explore, end) and saves trajectories that accumulate knowledge across episodes
+  4. System replays a successful trajectory from a previous episode and detects when state diverges from expectation
+  5. System compares environment-reported state against graph-predicted state and flags discrepancies
+**Plans**: TBD
 
-**Dependencies:** None (foundation layer)
+Plans:
+- [ ] 04-01: TBD
+- [ ] 04-02: TBD
+- [ ] 04-03: TBD
 
-**Estimated Effort:** 3-4 days
+### Phase 5: Planning / MPC
+**Goal**: System finds paths through the knowledge graph to reach goal intervals, chains multi-frame sequences when targets are unreachable in one frame, and adjusts planning frequency dynamically
+**Depends on**: Phase 4 (graphs populated through exploration, awareness operational)
+**Requirements**: PLAN-01, PLAN-02, PLAN-03, PLAN-04, PLAN-05, PLAN-06, PLAN-07
+**Success Criteria** (what must be TRUE):
+  1. User specifies a goal as an interval on a state variable (e.g., speed 45-55) and system accepts it
+  2. System finds an action sequence through the knowledge graph that reaches the goal interval
+  3. When target is unreachable in one frame, system chains multiple frames and knows what's achievable per frame from MIN/MAX/bins
+  4. Planning frequency increases automatically when system is closer to constraint boundaries
+  5. System returns graceful failure ("path not found") when no sequence exists, and never violates constraint intervals during planning
+**Plans**: TBD
 
----
+Plans:
+- [ ] 05-01: TBD
+- [ ] 05-02: TBD
 
-## Phase 2: Knowledge Graph Infrastructure
+### Phase 6: Hierarchical Intelligence
+**Goal**: System composes multiple goals across variables, decomposes complex goals into achievable subgoals, and plans at multiple hierarchical levels with bidirectional information flow
+**Depends on**: Phase 5 (single-variable planning works)
+**Requirements**: HIER-01, HIER-02, HIER-03, HIER-04, HIER-05
+**Success Criteria** (what must be TRUE):
+  1. System accepts compound goals (AND logic across multiple variables: position 50-60 AND speed 45-55 AND distance > 5m)
+  2. Complex goals decompose into subgoals that the Phase 5 planner can each solve independently
+  3. Multi-level planning operates where Level N aggregates Level N-1 entities (vacuum robot analogy works)
+  4. Information flows bidirectionally: Level N sends commands down, Level N-1 sends state up
+  5. System stops safely if no path satisfies all constraint layers simultaneously
+**Plans**: TBD
 
-**Goal:** Build core knowledge graph system to record and query state-action relationships
+Plans:
+- [ ] 06-01: TBD
+- [ ] 06-02: TBD
 
-**Requirements Mapped:**
-- ACTION-01 through ACTION-05
-- GRAPH-01 through GRAPH-06
-- RECORD-01 through RECORD-07
-- QUERY-01 through QUERY-05
-- KNOWLEDGE-01 through KNOWLEDGE-04
-- MEMORY-01 through MEMORY-04
+## Progress
 
-**Deliverables:**
+**Execution Order:**
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
-1. **Action Discretizer Module**
-   - Read action definitions from config (continuous ranges)
-   - Create discrete bins (e.g., gas 0-1 → bins: low/med/high)
-   - Enforce action constraints (max acceleration, etc.)
-   - Generate all combinations (including simultaneous actions)
-   - Differentiate hard vs soft constraints
-
-2. **Knowledge Graph Class**
-   - Store nodes: `{id, min_val, max_val, properties, variable_name}`
-   - Store edges: `{from_id, to_id, action_name, action_bin, timestamp}`
-   - Graph per state variable (e.g., position_graph, velocity_graph)
-   - Initialize empty graphs at startup
-   - Persist graphs to disk (JSON or database format)
-
-3. **State Recording Module**
-   - At each frame: observe all state values
-   - For each variable: query graph "is there a node for this value?"
-   - Create node if needed (auto-binning continuous values)
-   - Record edge: prev_state → curr_state via action_name
-   - Handle multi-variable transitions (gas affects both velocity AND position)
-   - Label edges with action names (human-readable, not indices)
-
-4. **Graph Query Module**
-   - Query by value: "Is position 42.5 in a known node?"
-   - List all edges from a node (all tried actions)
-   - List untried edges (action combinations not yet performed)
-   - Retrieve transition history (which actions led to this state)
-   - Performance: all queries <100ms
-
-5. **Knowledge Derivation Module**
-   - User specifies: position is input, velocity is derived
-   - System derives: velocity = Δposition / Δtime
-   - System derives: acceleration = Δvelocity / Δtime
-   - Reduces graph explosion (only store primitives)
-
-6. **Episode Memory Module**
-   - Save episode after completion: trajectories, states, actions
-   - Retrieve episode by ID: replay exact sequence
-   - Extract successful trajectories (filter for episodes that reached goal)
-   - Archive old episodes (compress, delete based on retention policy)
-
-**Success Criteria:**
-- ✓ Action discretizer creates correct bins from config
-- ✓ Action combinations match expected count (e.g., 256 for TrackMania)
-- ✓ Knowledge graphs initialize empty
-- ✓ During episode: state-action transitions recorded correctly
-- ✓ Multi-variable transitions work (one action affects multiple graphs)
-- ✓ Edges labeled with action names (can read graph visually)
-- ✓ Query "is position 42.5 known?" returns correct node
-- ✓ Query "untried actions from node X" returns correct list
-- ✓ All queries respond <100ms
-- ✓ Derived knowledge (velocity) computed correctly
-- ✓ Episode saved and replayed exactly
-- ✓ 100 episodes stored without memory explosion
-
-**Dependencies:** Phase 1 (Config & State)
-
-**Estimated Effort:** 5-6 days
+| Phase | Plans Complete | Status | Completed |
+|-------|---------------|--------|-----------|
+| 1. System Initialization | 0/TBD | Not started | - |
+| 2. Brain Capacity Micro-Processes | 0/TBD | Not started | - |
+| 3. Knowledge Graph Infrastructure | 0/TBD | Not started | - |
+| 4. Exploration and Awareness | 0/TBD | Not started | - |
+| 5. Planning / MPC | 0/TBD | Not started | - |
+| 6. Hierarchical Intelligence | 0/TBD | Not started | - |
 
 ---
 
-## Phase 3: Exploration Intelligence
+## Coverage
 
-**Goal:** Implement first intelligence layer—systematic exploration of action space
+**49/49 requirements mapped (100%)**
 
-**Requirements Mapped:**
-- EXPLORE-01 through EXPLORE-04
-- REPEAT-01 through REPEAT-03
+| Category | Requirements | Phase | Count |
+|----------|-------------|-------|-------|
+| INIT | INIT-01 to INIT-06 | Phase 1 | 6 |
+| BRAIN | BRAIN-01 to BRAIN-10 | Phase 2 | 10 |
+| GRAPH | GRAPH-01 to GRAPH-12 | Phase 3 | 12 |
+| EXPLORE | EXPLORE-01 to EXPLORE-06 | Phase 4 | 6 |
+| AWARE | AWARE-01 to AWARE-03 | Phase 4 | 3 |
+| PLAN | PLAN-01 to PLAN-07 | Phase 5 | 7 |
+| HIER | HIER-01 to HIER-05 | Phase 6 | 5 |
 
-**Deliverables:**
-
-1. **Exploration Strategy Module**
-   - At each state node: identify all possible actions
-   - Identify which actions have been tried
-   - Identify untried actions
-   - Heuristic: try untried actions before moving to new nodes
-   - Handle n-ary combinations (not just pairs)
-
-2. **Search Algorithm**
-   - Depth-first search for untried actions
-   - Detect fully-explored nodes (all action combinations tried)
-   - Move to next unexplored node
-   - Generate exploration trajectory
-
-3. **Repetition Intelligence**
-   - Extract successful trajectory from previous episode
-   - Replay trajectory by following same action sequence
-   - If state is unknown, flag for further exploration
-   - Compare repeated trajectory to original (detect drift)
-
-4. **Episode Loop Integration**
-   - Start episode: reset to initial state (or preserve if training continues)
-   - Each frame: apply exploration strategy
-   - End episode: save trajectory
-   - Metrics: states explored, edges added, untried actions remaining
-
-**Success Criteria:**
-- ✓ System identifies untried actions at a node
-- ✓ Exploration tries untried actions systematically
-- ✓ All action combinations eventually tried (N! combinations for N actions)
-- ✓ Fully-explored nodes marked correctly
-- ✓ Exploration generates meaningful trajectories
-- ✓ Episode trajectory saved and retrievable
-- ✓ Repetition replays trajectory exactly
-- ✓ Repetition detects unknown states
-- ✓ Multiple episodes build on each other (cumulative knowledge)
-
-**Dependencies:** Phase 2 (Knowledge Graph)
-
-**Estimated Effort:** 3-4 days
+No orphaned requirements. No duplicates.
 
 ---
 
-## Phase 4: Planning Intelligence
+## Dependency Chain
 
-**Goal:** Implement path planning within constraint intervals
+```
+Phase A (DONE) --> Phase 1 (INIT) --> Phase 2 (BRAIN) --> Phase 3 (GRAPH)
+                                                              |
+                                                              v
+                   Phase 6 (HIER) <-- Phase 5 (PLAN) <-- Phase 4 (EXPLORE+AWARE)
+```
 
-**Requirements Mapped:**
-- PLAN-01 through PLAN-05
-- DCONST-01 through DCONST-04
-
-**Deliverables:**
-
-1. **Goal Definition Interface**
-   - User specifies goal: interval on state variable
-   - Example: "reach position 50-60 and maintain velocity 20-30"
-   - System parses goal spec
-
-2. **Pathfinding Algorithm**
-   - Input: current state, goal intervals
-   - Search graph: find path from current node to goal node
-   - Algorithm: A* or Dijkstra with constraint validation
-   - Output: sequence of actions to reach goal
-
-3. **Constraint Validation**
-   - Before executing action: check hard constraints
-   - Hard constraint violated? Stop, don't execute
-   - Soft constraint warning? Execute but log
-   - Path validation: entire sequence respects all constraints
-
-4. **Graceful Failure Handling**
-   - If no path found: return safe fallback action (e.g., brake)
-   - If multiple paths: choose shortest or safest
-   - Communicate failure: "path not found to goal X"
-
-5. **Dynamic Timestamping**
-   - Measure distance to goal (state → goal interval)
-   - Closer to boundary = more frequent replanning
-   - Example: far away = plan every 0.5s, close = plan every 0.1s
-   - Timestep adjustment heuristic: inversely proportional to boundary_distance
-
-**Success Criteria:**
-- ✓ System accepts goal specs (position interval, velocity interval)
-- ✓ Pathfinding finds path from current to goal
-- ✓ Path respects all constraints (validated)
-- ✓ Hard constraints never violated
-- ✓ System handles "path not found" gracefully
-- ✓ Multiple goals combined (AND logic): reach (50-60 position) AND (20-30 velocity)
-- ✓ Timestep adjusts dynamically based on distance-to-goal
-- ✓ Path quality improves as experience accumulates (more edges in graph)
-
-**Dependencies:** Phase 3 (Exploration Intelligence)
-
-**Estimated Effort:** 4-5 days
+Each phase produces testable, runnable code. Each phase builds on the previous.
 
 ---
 
-## Phase 5: Hierarchical Control
-
-**Goal:** Implement multi-level goal composition and hierarchical planning
-
-**Requirements Mapped:**
-- HIER-01 through HIER-04
-
-**Key Concept (Dr. Sutton's vacuum robot analogy):**
-- Level 1: Vacuum knows its position on floor
-- Level 2: System coordinates 2 vacuums, knows both positions
-- Level 3: System controls 2 floors, coordinates vacuums on both floors
-- Level 4: System controls neighborhood, coordinates multiple houses
-- **Pattern:** Each level composes lower-level intelligences
-
-**Deliverables:**
-
-1. **Goal Composition Module**
-   - Combine multiple constraints: goal_A ∩ goal_B = compound_goal
-   - Example: "reach position 50-60" ∩ "maintain velocity 20-30" ∩ "avoid obstacles 5m away"
-   - Order goals by priority (some must succeed, others should succeed)
-
-2. **Goal Decomposition**
-   - Break compound goal into subgoals
-   - Sequence subgoals: step 1 (move to X), step 2 (adjust velocity), step 3 (maintain safety)
-   - Each subgoal is achievable by Phase 4 planner
-
-3. **Hierarchical Planner**
-   - Level N: operates on aggregates of Level N-1 entities
-   - Example: Level 1 plans actions for single agent, Level 2 plans for 2-agent coordination
-   - Each level respects parent constraints
-
-4. **Multi-Level Integration**
-   - Information flow: Level N↓ sends commands to Level N-1
-   - Information flow: Level N-1↑ sends state to Level N
-   - Cycle: plan at all levels, then execute Level 1 commands
-
-5. **Scaling Example: Multi-Robot System**
-   - 10 robots: each Level 1 plans individual robot actions
-   - Level 2: plans team formations, avoids inter-robot collisions
-   - Level 3: plans mission objectives across teams
-   - Same code, scaled through hierarchical composition
-
-**Success Criteria:**
-- ✓ System composes 2-3 goals (AND logic)
-- ✓ Compound goals resolved to achievable subgoals
-- ✓ Hierarchical planning works for simple system (2 variables)
-- ✓ Each level respects constraints of parent level
-- ✓ Goal priority handled correctly (critical vs optional)
-- ✓ Scaling validated: single agent → 2-agent → 10-agent scenarios
-
-**Dependencies:** Phase 4 (Planning Intelligence)
-
-**Estimated Effort:** 5-7 days
-
----
-
-## Phase 6: Safety & Production Hardening
-
-**Goal:** Production-ready system with safety guarantees and performance optimization
-
-**Requirements Mapped:**
-- SAFETY-01 through SAFETY-04
-- PERF-01 through PERF-04
-- PROD-01 through PROD-05
-
-**Deliverables:**
-
-1. **Hard vs Soft Constraints**
-   - Hard constraint: violation = system stops immediately
-   - Soft constraint: violation = warning + buffered response
-   - Config specifies which is which
-   - Example: "never exceed 100 km/h" is hard; "prefer < 90 km/h" is soft
-
-2. **Simulation vs Real-World Mode**
-   - Simulation: agent can learn from mistakes (try and fail)
-   - Real-world: agent cannot fail (hard constraints strictly enforced)
-   - Mode flag in config
-   - Real-world mode prevents exploration that violates hard constraints
-
-3. **Graceful Degradation**
-   - Path not found? Return safe action (brake, center steering)
-   - Constraint violated? Revert to previous safe state
-   - Recovery logic: how to recover from off-goal state
-
-4. **Performance Optimization**
-   - Support 100+ state variables (tested)
-   - Support 1000+ action combinations (tested)
-   - Query response <100ms (benchmarked)
-   - Memory usage: graph compression, history pruning
-
-5. **Comprehensive Logging**
-   - Log all state-action transitions
-   - Log goal-seeking behavior (plan → execute → result)
-   - Log constraint violations (when, where, why)
-   - Log performance metrics (query time, memory usage)
-
-6. **Graph Analysis & Visualization**
-   - Export graphs to GraphML or JSON (for visualization)
-   - Tools: identify densely-explored regions
-   - Tools: find critical decision points
-   - Tools: predict unexplored areas
-
-7. **Monitoring & Health Checks**
-   - Graph integrity checks (no orphaned nodes)
-   - Consistency checks (action combinations match config)
-   - Performance alerts (queries >100ms)
-   - Memory alerts (history buffer full)
-
-8. **Rollback & Recovery**
-   - Snapshots of graph state at checkpoints
-   - Rollback to previous snapshot if corrupted
-   - Import/export graphs for backup/migration
-
-**Success Criteria:**
-- ✓ Hard constraint never violated (tested with adversarial scenarios)
-- ✓ Soft constraint triggers warning, allows recovery
-- ✓ Simulation mode: exploration is free
-- ✓ Real-world mode: exploration respects hard constraints
-- ✓ Graceful degradation: never crashes, always returns safe action
-- ✓ 100 variables supported, queries <100ms
-- ✓ 1000+ action combinations supported
-- ✓ Memory usage stays bounded (tested with 1000 episodes)
-- ✓ Logging captures all critical events
-- ✓ Graphs export correctly
-- ✓ Health checks pass automatically
-- ✓ Rollback recovers to good state
-
-**Dependencies:** Phase 5 (Hierarchical Control)
-
-**Estimated Effort:** 4-5 days
-
----
-
-## Phase 7: Integration & Validation
-
-**Goal:** End-to-end system testing, cross-environment validation, ready for research publication
-
-**Requirements Mapped:**
-- All v1 + v2 requirements validated end-to-end
-
-**Deliverables:**
-
-1. **TrackMania Validation**
-   - Agent learns to drive autonomously
-   - Respects track boundaries (hard constraint)
-   - Optimizes speed (soft constraint: fast but safe)
-   - Handles unexpected obstacles
-   - Metrics: lap time, boundary violations, exploration efficiency
-
-2. **Drone Validation** (simulated)
-   - Agent learns to navigate 3D space
-   - Config: different actions (pitch, roll, yaw, throttle), different feedbacks (altitude, velocity, orientation)
-   - Same code as TrackMania, different config
-   - Respects altitude limits (hard), optimize path (soft)
-
-3. **Robot Validation** (simulated)
-   - Agent learns to navigate 2D environment
-   - Obstacle avoidance: hard constraint
-   - Path optimization: soft constraint
-   - Same code, different config
-
-4. **Cross-Environment Testing**
-   - Verify code is truly environment-agnostic
-   - Only configs differ, no code changes
-   - Performance comparable across environments
-
-5. **Stress Testing**
-   - Run 1000 episodes continuously
-   - Monitor memory, query performance
-   - Verify no degradation over time
-   - Graph should reach stable size (or grow predictably)
-
-6. **Regression Testing**
-   - Test suite: verify Phase 1-6 requirements still work
-   - Automated tests for config loading, state tracking, graph queries, planning, etc.
-
-7. **Documentation & Formalization**
-   - Architecture document (design decisions explained)
-   - API reference (function signatures, parameters)
-   - Mathematical formalization (for publication)
-   - Tutorial: how to configure for new environment
-
-**Success Criteria:**
-- ✓ TrackMania: agent learns, improves over episodes
-- ✓ Drone: same code, different config, learns to fly
-- ✓ Robot: same code, different config, navigates safely
-- ✓ Cross-environment: code identical, only configs differ
-- ✓ Stress test: 1000 episodes, no degradation
-- ✓ Memory usage stable/predictable
-- ✓ Query performance consistent
-- ✓ All automated tests pass
-- ✓ Documentation complete and clear
-- ✓ Ready for peer review / publication
-
-**Dependencies:** Phase 6 (Safety & Production)
-
-**Estimated Effort:** 3-4 days (assumes environments are already simulated)
-
----
-
-## Phase 8: Deployment & Formalization (Future)
-
-**Note:** Not in v1 roadmap; planning for future work
-
-**Possible Deliverables:**
-- Hardware integration (real robots, autonomous vehicles)
-- Healthcare system integration (preventive monitoring)
-- Multi-agent coordination (teams of robots)
-- Formal mathematical proofs (convergence, safety guarantees)
-
----
-
-## Timeline Summary
-
-| Phase | Est. Days | Cumulative | Key Milestone |
-|-------|-----------|-----------|--------------|
-| 1 | 3-4 | 3-4 | Config system ready |
-| 2 | 5-6 | 8-10 | Graphs populate & query |
-| 3 | 3-4 | 11-14 | Exploration works |
-| 4 | 4-5 | 15-19 | Planning works |
-| 5 | 5-7 | 20-26 | Hierarchical control works |
-| 6 | 4-5 | 24-31 | Production-ready |
-| 7 | 3-4 | 27-35 | Multi-environment validated |
-
-**Total Estimated: 4-5 weeks of focused development**
-
----
-
-## Success Criteria (Overall Roadmap)
-
-**Must Have (v1):**
-- ✓ Configuration-driven, environment-agnostic architecture
-- ✓ Knowledge graphs populate during exploration
-- ✓ Queries answer: "What state do I know? What actions did I try here? What actions are untried?"
-- ✓ Planning finds paths respecting constraints
-- ✓ Hard constraints never violated
-- ✓ System works on TrackMania, Drone, Robot with only config changes
-
-**Should Have (v2):**
-- ✓ Hierarchical goal composition
-- ✓ Dynamic timestamping based on distance-to-goal
-- ✓ Graceful failure handling
-- ✓ Comprehensive logging and monitoring
-
-**Nice to Have:**
-- Performance: <100ms queries (achieved)
-- Scalability: 100+ variables, 1000+ combinations (achieved)
-- Documentation ready for publication
-
----
-
-*Roadmap created: 2026-02-16 after comprehensive transcription analysis*
-*Last updated: 2026-02-16*
+*Roadmap created: 2026-02-26*
+*Milestone: v1.0 Full Sutton Pipeline*
+*Source: 49 requirements from 6 Sutton meeting transcripts*

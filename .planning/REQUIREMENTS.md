@@ -162,22 +162,63 @@ All validated: 9/9 live rubrics, 12/12 offline tests, stable 3/3 runs on TMNF.
 
 ## Traceability
 
-_Filled by roadmap after phase assignment._
-
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| INIT-01 to INIT-06 | TBD | Pending |
-| BRAIN-01 to BRAIN-10 | TBD | Pending |
-| GRAPH-01 to GRAPH-12 | TBD | Pending |
-| EXPLORE-01 to EXPLORE-06 | TBD | Pending |
-| AWARE-01 to AWARE-03 | TBD | Pending |
-| PLAN-01 to PLAN-07 | TBD | Pending |
-| HIER-01 to HIER-05 | TBD | Pending |
+| INIT-01 | Phase 1: System Initialization | Pending |
+| INIT-02 | Phase 1: System Initialization | Pending |
+| INIT-03 | Phase 1: System Initialization | Pending |
+| INIT-04 | Phase 1: System Initialization | Pending |
+| INIT-05 | Phase 1: System Initialization | Pending |
+| INIT-06 | Phase 1: System Initialization | Pending |
+| BRAIN-01 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-02 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-03 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-04 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-05 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-06 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-07 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-08 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-09 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| BRAIN-10 | Phase 2: Brain Capacity Micro-Processes | Pending |
+| GRAPH-01 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-02 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-03 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-04 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-05 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-06 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-07 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-08 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-09 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-10 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-11 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| GRAPH-12 | Phase 3: Knowledge Graph Infrastructure | Pending |
+| EXPLORE-01 | Phase 4: Exploration and Awareness | Pending |
+| EXPLORE-02 | Phase 4: Exploration and Awareness | Pending |
+| EXPLORE-03 | Phase 4: Exploration and Awareness | Pending |
+| EXPLORE-04 | Phase 4: Exploration and Awareness | Pending |
+| EXPLORE-05 | Phase 4: Exploration and Awareness | Pending |
+| EXPLORE-06 | Phase 4: Exploration and Awareness | Pending |
+| AWARE-01 | Phase 4: Exploration and Awareness | Pending |
+| AWARE-02 | Phase 4: Exploration and Awareness | Pending |
+| AWARE-03 | Phase 4: Exploration and Awareness | Pending |
+| PLAN-01 | Phase 5: Planning / MPC | Pending |
+| PLAN-02 | Phase 5: Planning / MPC | Pending |
+| PLAN-03 | Phase 5: Planning / MPC | Pending |
+| PLAN-04 | Phase 5: Planning / MPC | Pending |
+| PLAN-05 | Phase 5: Planning / MPC | Pending |
+| PLAN-06 | Phase 5: Planning / MPC | Pending |
+| PLAN-07 | Phase 5: Planning / MPC | Pending |
+| HIER-01 | Phase 6: Hierarchical Intelligence | Pending |
+| HIER-02 | Phase 6: Hierarchical Intelligence | Pending |
+| HIER-03 | Phase 6: Hierarchical Intelligence | Pending |
+| HIER-04 | Phase 6: Hierarchical Intelligence | Pending |
+| HIER-05 | Phase 6: Hierarchical Intelligence | Pending |
 
-**Coverage:** 49 requirements across 7 categories
+**Coverage:** 49/49 requirements mapped to phases (100%)
 **All derived from Sutton meeting transcripts -- no invented requirements**
 
 ---
 
 *Requirements defined: 2026-02-26*
+*Traceability updated: 2026-02-26*
 *Source: 6 meeting transcripts + authoritative spec + authoritative law*
