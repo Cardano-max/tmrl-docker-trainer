@@ -5,28 +5,87 @@
 
   "actions": {
     "gas": {
-      "type": "binary",
-      "description": "Throttle -- BINARY in TMNF (>0.001 = full gas ON)",
-      "range": [0.0, 1.0]
+      "description": "Throttle (TMNF: binary >0.001 = full gas ON)",
+      "range": [0.0, 1.0],
+      "input_type": "binary"
     },
     "brake": {
-      "type": "binary",
-      "description": "Brake -- BINARY in TMNF (>0.001 = full brake ON)",
-      "range": [0.0, 1.0]
+      "description": "Brake (TMNF: binary >0.001 = full brake ON)",
+      "range": [0.0, 1.0],
+      "input_type": "binary"
     },
-    "steering": {
-      "type": "analog",
-      "description": "Steering -- ANALOG (-1=full left, +1=full right, maps to -65536..+65536)",
-      "range": [-1.0, 1.0]
+    "left": {
+      "description": "Steer left (TMNF: binary digital key)",
+      "range": [0.0, 1.0],
+      "input_type": "binary"
+    },
+    "right": {
+      "description": "Steer right (TMNF: binary digital key)",
+      "range": [0.0, 1.0],
+      "input_type": "binary"
     }
   },
 
   "feedbacks": {
     "speed": {
-      "description": "Vehicle speed from TMInterface SimStateData",
+      "description": "Vehicle speed from velocity vector",
       "unit": "km/h",
-      "interval_size": 5.0,
-      "expected_range": [0.0, 500.0]
+      "precision": 0.6,
+      "track_graph": true
+    },
+    "pos_x": {
+      "description": "World X position",
+      "unit": "meters",
+      "precision": 0.01,
+      "track_graph": true
+    },
+    "pos_y": {
+      "description": "World Y position (vertical)",
+      "unit": "meters",
+      "precision": 0.01,
+      "track_graph": true
+    },
+    "pos_z": {
+      "description": "World Z position",
+      "unit": "meters",
+      "precision": 0.01,
+      "track_graph": true
+    },
+    "yaw": {
+      "description": "Vehicle yaw orientation",
+      "unit": "radians",
+      "precision": 0.001,
+      "track_graph": true
+    },
+    "velocity_x": {
+      "description": "X velocity component",
+      "unit": "m/s",
+      "precision": 0.1,
+      "track_graph": false
+    },
+    "velocity_y": {
+      "description": "Y velocity component",
+      "unit": "m/s",
+      "precision": 0.1,
+      "track_graph": false
+    },
+    "velocity_z": {
+      "description": "Z velocity component",
+      "unit": "m/s",
+      "precision": 0.1,
+      "track_graph": false
+    },
+    "rpm": {
+      "description": "Engine RPM",
+      "unit": "rpm",
+      "precision": 100.0,
+      "track_graph": false
+    },
+    "gear": {
+      "description": "Current gear",
+      "unit": "integer",
+      "precision": 1.0,
+      "track_graph": false
     }
   },
 
@@ -40,10 +99,9 @@
 
   "experimentation": {
     "enabled": true,
-    "search_precision": 0.001,
     "min_probe_speed_kmh": 10.0,
     "use_rewind": true,
-    "description": "Bin discovery via Sutton downward sweep algorithm"
+    "description": "Bin discovery via Sutton downward sweep algorithm. Precision is discovered by the system, not configured."
   },
 
   "prior_knowledge": {
