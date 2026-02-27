@@ -5,33 +5,34 @@
 See: .planning/PROJECT.md (updated 2026-02-26)
 
 **Core value:** Enable safe, goal-based autonomous learning that scales hierarchically
-**Current focus:** Phase 1 complete, ready for Phase 2 -- Brain Capacity Micro-Processes
+**Current focus:** Phase 2 in progress -- Brain Capacity Micro-Processes
 
 ## Current Position
 
-Phase: 1 of 6 (System Initialization) -- COMPLETE
-Plan: 2/2 complete
-Status: Phase 1 verified, ready for Phase 2
-Last activity: 2026-02-26 -- Phase 1 complete: 5/5 must-haves verified
+Phase: 2 of 6 (Brain Capacity Micro-Processes)
+Plan: 1/2 complete
+Status: 02-01 complete, ready for 02-02
+Last activity: 2026-02-27 -- 02-01 Frame-Sync Micro-Process Orchestrator complete (12/12 tests, 3 tasks)
 
-Progress: [██░░░░░░░░] 17%
+Progress: [██░░░░░░░░] 25%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 2
-- Average duration: 4.5 min
-- Total execution time: 0.15 hours
+- Total plans completed: 3
+- Average duration: 4.0 min
+- Total execution time: 0.2 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-system-initialization | 2 | 9min | 4.5min |
+| 02-brain-capacity-micro-processes | 1 | 3min | 3min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (4min), 01-02 (5min)
-- Trend: --
+- Last 5 plans: 01-01 (4min), 01-02 (5min), 02-01 (3min)
+- Trend: accelerating
 
 *Updated after each plan completion*
 
@@ -61,6 +62,15 @@ Progress: [██░░░░░░░░] 17%
 - tests/test_system_init.py: 9 offline tests, all passing, covers INIT-01 through INIT-06
 - __init__.py fixed (was importing non-existent classes, blocking pytest)
 
+### Phase 2 Plan 01: Frame-Sync Micro-Process Orchestrator (COMPLETE)
+
+**What shipped:**
+- core/frame_orchestrator.py: FrameOrchestrator with all 6 Sutton micro-processes
+- FrameAction dataclass updated with left/right for TMNF 4-input model
+- BRAIN-07 (query_frame), BRAIN-08 (initialize_graph), BRAIN-09 (compare_to_known)
+- tests/test_frame_orchestrator.py: 12 offline tests with MockAdapter, all passing
+- In-memory history always works; FalkorDB optional overlay
+
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table.
@@ -77,6 +87,9 @@ Recent decisions affecting current work:
 - [01-02]: Validate config before prior knowledge check -- need frame_duration_ms even when prior knowledge exists
 - [01-02]: Adapter injection via constructor -- allows offline tests with MockAdapter without changing init logic
 - [01-02]: wait_fn via getattr(adapter, wait_one_tick, fallback) -- TMNF TCP sync vs time.sleep for non-TMNF adapters
+- [02-01]: In-memory history always works; FalkorDB is optional overlay (no hard dependency)
+- [02-01]: FrameAction gets left/right fields for TMNF 4-binary-input model (Phase A proven)
+- [02-01]: Orchestrator imports only logging+typing (adapter-agnostic, no TMNF imports)
 
 ### Pending Todos
 
@@ -88,6 +101,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-02-26
-Stopped at: Phase 1 complete, verified 5/5 must-haves, ready for Phase 2
+Last session: 2026-02-27
+Stopped at: Completed 02-01-PLAN.md (Frame-Sync Micro-Process Orchestrator)
 Resume file: None
