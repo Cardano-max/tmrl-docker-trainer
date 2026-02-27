@@ -19,6 +19,11 @@ This is CAPACITY, not intelligence. Intelligence modules compose these operation
 import logging
 from typing import Dict, List, Optional
 
+try:
+    from knowledge.multi_graph_manager import MultiGraphManager
+except ImportError:
+    MultiGraphManager = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,19 +44,22 @@ class FrameOrchestrator:
       - get_feedbacks() -> Dict
     """
 
-    def __init__(self, adapter, knowledge_manager=None):
+    def __init__(self, adapter, knowledge_manager=None, multi_graph=None):
         """
         Initialize frame orchestrator.
 
         Args:
             adapter: Any adapter with send_action_dict(), wait_one_tick(), get_feedbacks()
-            knowledge_manager: Optional KnowledgeManager for graph recording
+            knowledge_manager: Optional KnowledgeManager for legacy graph recording (Phase 2)
+            multi_graph: Optional MultiGraphManager for per-variable graph recording (Phase 3)
         """
         self.adapter = adapter
         self.knowledge = knowledge_manager
+        self.multi_graph = multi_graph
         self.frame_id = 0
         self.history = []  # In-memory frame history
         self._graph_available = False  # Set by initialize_graph()
+        self._multi_graph_available = False  # Set by initialize_multi_graph()
 
     def execute_one_frame(self, action: Dict) -> Dict:
         """
@@ -96,6 +104,17 @@ class FrameOrchestrator:
                 )
             except Exception as e:
                 logger.warning(f"[ORCHESTRATOR] Graph recording failed for frame {self.frame_id}: {e}")
+
+        # Record to per-variable knowledge graphs (Phase 3)
+        if self.multi_graph and self._multi_graph_available:
+            try:
+                self.multi_graph.record_frame(
+                    from_feedbacks=feedback_before,
+                    to_feedbacks=feedback_after,
+                    action=action
+                )
+            except Exception as e:
+                logger.warning(f"[ORCHESTRATOR] Multi-graph recording failed for frame {self.frame_id}: {e}")
 
         self.frame_id += 1
         return result
@@ -167,6 +186,50 @@ class FrameOrchestrator:
             self._graph_available = True
             return True
         return False
+
+    def initialize_multi_graph(self, host: str = 'localhost', port: int = 6379) -> bool:
+        """
+        Initialize per-variable multi-graph connection (Phase 3).
+
+        Attempts to connect the MultiGraphManager to FalkorDB.
+        Sets self._multi_graph_available flag. If connection fails,
+        orchestrator still works via in-memory history only.
+
+        Args:
+            host: FalkorDB host
+            port: FalkorDB port
+
+        Returns:
+            True if multi-graph connection succeeded
+        """
+        self._multi_graph_available = False
+        if not self.multi_graph:
+            return False
+        if self.multi_graph.connect(host=host, port=port):
+            self._multi_graph_available = True
+            return True
+        return False
+
+    def query_variable_graph(self, variable_name: str, value: float) -> Optional[Dict]:
+        """
+        Query a per-variable graph for a specific state node.
+
+        Extension of BRAIN-07 (query_frame) for the per-variable model.
+        Returns the State node properties if found.
+
+        Args:
+            variable_name: Variable to query (e.g. 'speed', 'pos_x')
+            value: Raw state value (will be discretized by VariableGraph)
+
+        Returns:
+            Node properties dict or None if not found/not available
+        """
+        if not self.multi_graph or not self._multi_graph_available:
+            return None
+        vg = self.multi_graph.get_variable_graph(variable_name)
+        if vg is None:
+            return None
+        return vg.get_node(value)
 
     def compare_to_known(self, current_feedbacks: Dict) -> Optional[Dict]:
         """
