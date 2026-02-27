@@ -13,7 +13,7 @@ Implement the complete intelligent agent architecture specified across 6 Dr. Sut
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: System Initialization** - Config validation, prior knowledge loading, auto bin discovery on startup
-- [ ] **Phase 2: Brain Capacity Micro-Processes** - Send/perform/record action, receive/collect/record feedback, query graph, compare state
+- [x] **Phase 2: Brain Capacity Micro-Processes** - Send/perform/record action, receive/collect/record feedback, query graph, compare state
 - [ ] **Phase 3: Knowledge Graph Infrastructure** - Per-variable graphs with no-duplicate nodes, per-frame recording, multiplicity testing
 - [ ] **Phase 4: Exploration and Awareness** - Untried action discovery, depth-first search, episode loop, repetition, state comparison
 - [ ] **Phase 5: Planning / MPC** - Goal intervals, pathfinding through graph, multi-frame chaining, dynamic timestep, constraints
@@ -47,12 +47,11 @@ Plans:
   3. System records every action sent and every feedback received (retrievable history)
   4. System queries the knowledge graph for any node, edge, or relationship and gets correct results
   5. Each micro-process is a standalone function that intelligence modules compose (not monolithic)
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
-- [ ] 02-03: TBD
+- [x] 02-01-PLAN.md -- FrameOrchestrator + FrameAction left/right + 12 unit tests
+- [x] 02-02-PLAN.md -- Live per-frame graph recording test for Friday demo
 
 ### Phase 3: Knowledge Graph Infrastructure
 **Goal**: Per-variable knowledge graphs populate correctly with state-action transitions, enforce no-duplicate-node semantics, and support per-frame simultaneous recording across all variables
@@ -128,7 +127,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|---------------|--------|-----------|
 | 1. System Initialization | 2/2 | ✓ Complete | 2026-02-26 |
-| 2. Brain Capacity Micro-Processes | 0/TBD | Not started | - |
+| 2. Brain Capacity Micro-Processes | 2/2 | ✓ Complete | 2026-02-27 |
 | 3. Knowledge Graph Infrastructure | 0/TBD | Not started | - |
 | 4. Exploration and Awareness | 0/TBD | Not started | - |
 | 5. Planning / MPC | 0/TBD | Not started | - |
