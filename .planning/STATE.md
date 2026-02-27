@@ -90,6 +90,15 @@ Progress: [██████░░░░] 58%
 - tests/test_variable_graph.py: 27 offline tests with MockFalkorGraph (no FalkorDB required)
 - GRAPH-04 (no duplicate nodes), GRAPH-06 (simultaneous recording), GRAPH-07 (multiple edges), GRAPH-08 (bin-labeled edges) verified
 
+### Phase 3 Plan 02: Orchestrator-to-Multi-Graph Wiring (COMPLETE)
+
+**What shipped:**
+- config/tmnf_config.json: 10 feedback variables with precision/track_graph, 4 binary actions (steering removed)
+- core/frame_orchestrator.py: MultiGraphManager wired in with dual recording path (legacy + per-variable)
+- tests/test_graph_integration.py: 9 offline integration tests (InMemoryVariableGraph mocks)
+- GRAPH-07 verified at integration level (different actions reach same destination = multiple edges)
+- All 48 tests passing: 27 plan-01 + 12 Phase 2 + 9 integration
+
 ### Phase 3 Plan 03: Multiplicity Tester (COMPLETE)
 
 **What shipped:**
@@ -127,6 +136,10 @@ Recent decisions affecting current work:
 - [03-01]: ActionBin.to_dict() format ('min'/'max' keys) as canonical bin dict format
 - [03-01]: Dead-zone actions (bin_id=0, value=0.0) skipped in record_frame
 - [03-01]: Parameterized Cypher queries ($val) instead of string interpolation
+- [03-02]: Removing steering from config['actions'] safe -- grep confirmed no code indexes by name
+- [03-02]: Dual recording path: legacy and multi-graph coexist in execute_one_frame (backward compatible)
+- [03-02]: InMemoryVariableGraph subclass for integration tests (real MultiGraphManager logic, mock storage)
+- [03-02]: try/except import for MultiGraphManager so orchestrator works without knowledge module
 - [03-03]: MultiplicityTester uses ActionBin dataclass objects (intelligence layer), not dicts
 - [03-03]: Auto-tolerance computed as half the minimum gap between distinct bin deltas
 - [03-03]: Binary probe strategy: below/around/above threshold, plus linspace in dead zone
