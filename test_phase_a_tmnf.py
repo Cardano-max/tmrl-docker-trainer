@@ -9,15 +9,22 @@ Pure Sutton algorithm with NO adaptations needed:
   - One tick per probe
   - Full state: speed, velocity, yaw, forces, wheel contact
 
-TMNF INPUT FACTS:
-  - Gas:      BINARY only (>0.001 = full gas ON, else OFF)
-  - Brake:    BINARY only (>0.001 = full brake ON, else OFF)
-  - Steering: ANALOG -1.0 to +1.0 (maps to -65536..+65536 in TMInterface)
+TMNF INPUT FACTS (without joystick/vJoy):
+  - Gas:   BINARY only (>0.001 = full gas ON, else OFF)
+  - Brake: BINARY only (>0.001 = full brake ON, else OFF)
+  - Left:  BINARY keyboard key (InputType::Left, Linesight-RL method)
+  - Right: BINARY keyboard key (InputType::Right, Linesight-RL method)
+
+  NOTE: Analog steer (InputType::Steer, -65536..+65536) requires a joystick
+  or vJoy binding. Without one, "Failed to execute input: no binding for
+  Steer (analog) found." The "Convert Inputs to Analog Steering" TMInterface
+  setting is a replay output formatter, NOT an input binding.
 
 This means:
-  - Gas discovery: trivial (finds 2 bins — off vs on)
-  - Brake discovery: trivial (finds 2 bins — off vs on)
-  - Steering discovery: full Sutton sweep (finds ~20+ bins)
+  - Gas discovery:   finds 2 bins (off vs on)
+  - Brake discovery: finds 2 bins (off vs on)
+  - Left discovery:  finds 2 bins (off vs on, measures yaw delta)
+  - Right discovery: finds 2 bins (off vs on, measures yaw delta)
 
 SETUP — REQUIRED BEFORE RUNNING:
   1. Install TMNF (free): https://trackmaniaforever.com/ or Steam
@@ -67,30 +74,35 @@ logger = logging.getLogger('TMNF_TEST')
 # ACTIONS CONFIG (TMNF reality)
 # =============================================================================
 
-# TMNF inputs:
-#   gas:      BINARY. Full gas or nothing. No analog throttle.
-#             Discovery will find 2 bins: [0, off/on threshold] and [threshold, 1.0]
-#   brake:    BINARY. Full brake or nothing. Discovery finds 2 bins.
-#   steering: ANALOG -1.0 to +1.0. Full Sutton sweep expected.
-#             With bidirectional bins: ~21+ bins (symmetric around 0).
+# Input types are DISCOVERED by the algorithm, not assumed.
+# The system probes each action and measures precision to determine
+# whether each input is binary (2 bins) or analog (N bins).
+# No "type" label in config — pure Sutton compliance.
 
 TMNF_ACTIONS_CONFIG = {
     'gas': {
         'range': [0.0, 1.0],
-        'type': 'binary',
-        'description': 'Throttle — BINARY in TMNF (>0.001 = full gas ON)'
+        'description': 'Throttle (TMNF: binary >0.001 = full gas ON)'
     },
     'brake': {
         'range': [0.0, 1.0],
-        'type': 'binary',
-        'description': 'Brake — BINARY in TMNF (>0.001 = full brake ON)'
+        'description': 'Brake (TMNF: binary >0.001 = full brake ON)'
     },
-    'steering': {
-        'range': [-1.0, 1.0],
-        'type': 'analog',
-        'description': 'Steering — ANALOG (-1=full left, +1=full right)'
-    }
+    'left': {
+        'range': [0.0, 1.0],
+        'description': 'Steer left (TMNF: binary keyboard key via InputType::Left)'
+    },
+    'right': {
+        'range': [0.0, 1.0],
+        'description': 'Steer right (TMNF: binary keyboard key via InputType::Right)'
+    },
 }
+
+# NOTE: TMNF has NO analog steering without a joystick/vJoy binding.
+# "Convert Inputs to Analog Steering" in TMInterface is a replay output setting,
+# NOT an input binding. SetInputState(InputType::Steer) fails without a device.
+# We use digital left/right (InputType::Left/Right) like Linesight-RL.
+# The algorithm DISCOVERS that all 4 inputs are binary (2 bins each).
 
 
 # =============================================================================
@@ -120,10 +132,19 @@ def make_probe_fn(
     def probe_one_tick(value: float) -> 'ProbeResult':
         nonlocal probe_counter
 
-        # Build action
+        # Build action — all inputs default to 0
         action_dict = {n: 0.0 for n in TMNF_ACTIONS_CONFIG}
         clipped = max(action_range[0], min(value, action_range[1]))
         action_dict[action_name] = clipped
+
+        # For left/right steering probes: add gas to maintain speed
+        # (yaw change requires speed; without gas, car decelerates and
+        #  yaw changes become tiny/unmeasurable)
+        is_steer = action_name in ('left', 'right')
+        if is_steer:
+            action_dict['gas'] = 1.0
+            # Also ensure 'steering' is 0 (no analog steer attempt)
+            action_dict['steering'] = 0.0
 
         # TMInterface has a ONE-TICK INPUT DELAY:
         # SetInputState during OnRunStep takes effect NEXT tick, not current.
@@ -132,8 +153,12 @@ def make_probe_fn(
         #   same for all probes → consistent fb_before) → send action →
         #   wait N ticks (our input) → read fb_after.
         #
-        # Steering: yaw change builds gradually, needs more ticks.
-        MEASURE_TICKS = 5 if action_name == 'steering' else 1
+        # Steering (left/right): yaw change builds gradually, needs more ticks.
+        # MEASURE_TICKS for steering: accumulates signal over N ticks because per-tick
+        # yaw delta (~0.0002 rad) is below measurement_epsilon.
+        # PLANNING IMPACT: steering bin deltas represent 5-tick effect, not 1-tick.
+        # Planner must divide by MEASURE_TICKS to get per-tick delta if needed.
+        MEASURE_TICKS = 5 if is_steer else 1
 
         if use_rewind:
             adapter.rewind()
@@ -155,8 +180,8 @@ def make_probe_fn(
         fb_after = adapter.get_feedbacks()
 
         # Compute delta
-        if action_name == 'steering':
-            # Yaw change (direct from TMInterface — no position-based approximation needed)
+        if is_steer:
+            # Yaw change for left/right steering
             if 'yaw' in fb_before and 'yaw' in fb_after:
                 delta = fb_after['yaw'] - fb_before['yaw']
                 # Wrap to [-pi, pi]
@@ -184,7 +209,7 @@ def make_probe_fn(
             delta_state=delta,
             feedback_before=fb_before,
             feedback_after=fb_after,
-            frame_duration_s=0.01,   # 10ms
+            frame_duration_s=0.01,   # 10ms -- matches TMNF physics tick. TODO: use discovered value from adapter
             valid=True
         )
         disc.probes.append(pr)
@@ -220,17 +245,17 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
     if actions_to_run is None:
         actions_to_run = list(TMNF_ACTIONS_CONFIG.keys())
 
-    intelligence = ExperimentationIntelligence(TMNF_ACTIONS_CONFIG, change_threshold=0.001)
+    intelligence = ExperimentationIntelligence(TMNF_ACTIONS_CONFIG)
     intelligence.start_time = time.time()
 
     # With rewind: probes are deterministic (same starting state), so tight epsilon.
     # Without rewind: sequential drift needs larger epsilon.
     if use_rewind:
         EPSILON_GAS_BRAKE = 0.01   # Deterministic — only float precision matters
-        EPSILON_STEERING  = 1e-5   # Yaw precision over 5 ticks
+        EPSILON_STEER     = 1e-5   # Yaw precision over 5 ticks
     else:
         EPSILON_GAS_BRAKE = 0.05   # Absorbs sequential speed drift (~0.01/tick)
-        EPSILON_STEERING  = 1e-4   # Wider for drift
+        EPSILON_STEER     = 1e-4   # Wider for drift
 
     logger.info("=" * 70)
     logger.info("PHASE A BIN DISCOVERY — TMNF (Pure Sutton)")
@@ -238,8 +263,7 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
     logger.info(f"  Tick:     10ms (deterministic)")
     logger.info(f"  Rewind:   {use_rewind}")
     logger.info(f"  Actions:  {actions_to_run}")
-    logger.info(f"  Gas/brake input: BINARY (2 bins expected each)")
-    logger.info(f"  Steering input:  ANALOG (full sweep expected)")
+    logger.info(f"  Input types: discovered by algorithm (not assumed)")
     logger.info("")
 
     # Get starting state
@@ -275,18 +299,15 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
         action_range = tuple(config['range'])
         is_bidir = action_range[0] < 0
 
-        eps = EPSILON_STEERING if action_name == 'steering' else EPSILON_GAS_BRAKE
+        eps = EPSILON_STEER if action_name in ('left', 'right') else EPSILON_GAS_BRAKE
 
         disc = FrameBinDiscovery(
-            action_name, action_range,
-            search_precision=0.001,
-            noise_epsilon=eps,
-            signal_epsilon=eps
+            action_name, action_range
         )
+        disc.measurement_epsilon = eps
 
         logger.info(f"\n{'=' * 60}")
         logger.info(f"  DISCOVERING: {action_name}")
-        logger.info(f"  Type:    {config['type']}")
         logger.info(f"  Range:   {action_range}")
         logger.info(f"  Epsilon: {eps}")
         logger.info(f"  Rewind:  {use_rewind}")
@@ -311,27 +332,15 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
         dt = time.time() - t0
 
         if a_max is not None and a_min is not None:
-            # Precision discovery for analog inputs
-            # Spec: "Bins = range from MIN to MAX divided by the precision
-            #        the system can handle"
-            # Binary inputs (gas/brake): always 2 bins, skip precision
-            measured_precision = None
-            if config['type'] == 'analog':
-                measured_precision = disc.measure_precision(probe_fn)
-                if measured_precision is not None:
-                    computed_bins = math.ceil((a_max - a_min) / measured_precision)
-                    computed_bins = max(2, min(computed_bins, 100))
-                    logger.info(f"  [PRECISION] Measured precision: {measured_precision:.6f}")
-                    logger.info(f"  [PRECISION] Computed bin count: "
-                                f"ceil(({a_max:.6f}-{a_min:.6f})/{measured_precision:.6f}) "
-                                f"= {computed_bins}")
-                else:
-                    logger.info(f"  [PRECISION] Could not measure precision, "
-                                f"using default {disc.DEFAULT_NUM_BINS} bins")
-
-            bins = disc.build_bins(precision=measured_precision)
+            # Build bins from discovered MIN/MAX
+            # Binary detection: if MIN ≈ MAX (range < search_precision),
+            # build_bins produces 2 bins (DEAD_ZONE + ON)
+            bins = disc.build_bins()
             if is_bidir:
                 bins = disc.make_bidirectional_bins(bins)
+
+            # Infer input type from results (not from config)
+            inferred_type = 'binary' if len(bins) <= 2 else 'analog'
 
             logger.info(f"\n  RESULT: {action_name}")
             logger.info(f"    MAX    = {a_max:.6f}")
@@ -339,11 +348,7 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
             logger.info(f"    Bins   = {len(bins)}")
             logger.info(f"    Probes = {probe_counter[0]}")
             logger.info(f"    Time   = {dt:.1f}s")
-            logger.info(f"    Input type: {config['type']}")
-            if measured_precision is not None:
-                logger.info(f"    Precision: {measured_precision:.6f} (measured)")
-            if config['type'] == 'binary':
-                logger.info(f"    (Binary input: expect 2 bins)")
+            logger.info(f"    Discovered type: {inferred_type}")
 
             results[action_name] = {
                 'max':          a_max,
@@ -353,8 +358,7 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
                 'time':         dt,
                 'delta_max':    disc.delta_max,
                 'delta_0':      disc.delta_0,
-                'input_type':   config['type'],
-                'precision':    measured_precision,
+                'input_type':   inferred_type,
                 'bin_details': [
                     {'id': b.bin_id, 'min': b.a_min, 'max': b.a_max, 'label': b.label}
                     for b in bins
@@ -365,7 +369,6 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
             logger.warning(f"    delta_max = {disc.delta_max}")
             logger.warning(f"    delta_0   = {disc.delta_0}")
             logger.warning(f"    Probes    = {probe_counter[0]}")
-            logger.warning(f"    (If gas/brake: expected for binary — no gradient between 0 and 1)")
 
             results[action_name] = {
                 'max':        None,
@@ -375,7 +378,7 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
                 'time':       dt,
                 'delta_max':  disc.delta_max,
                 'delta_0':    disc.delta_0,
-                'input_type': config['type'],
+                'input_type': 'none',
                 'no_range':   True
             }
 
@@ -390,11 +393,11 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
     logger.info(f"  Rewind mode:  {use_rewind}")
     for name, r in results.items():
         if r.get('no_range'):
-            logger.info(f"  {name}: NO RANGE (delta_max={r['delta_max']}, "
-                        f"type={r['input_type']})")
+            logger.info(f"  {name}: NO RANGE (delta_max={r['delta_max']})")
         else:
             logger.info(f"  {name}: MIN={r['min']:.6f}, MAX={r['max']:.6f}, "
-                        f"{r['bins']} bins, {r['probes']} probes [{r['input_type']}]")
+                        f"{r['bins']} bins, {r['probes']} probes "
+                        f"[{r['input_type']}]")
     logger.info("=" * 70)
 
     return results
@@ -419,9 +422,11 @@ def save_results(results: dict, use_rewind: bool) -> str:
         'rewind_mode':   use_rewind,
         'algorithm':     'sutton_downward_sweep',
         'input_facts': {
-            'gas':      'binary (threshold >0.001)',
-            'brake':    'binary (threshold >0.001)',
-            'steering': 'analog -65536..+65536',
+            'gas':   'binary (threshold >0.001)',
+            'brake': 'binary (threshold >0.001)',
+            'left':  'binary keyboard key (InputType::Left)',
+            'right': 'binary keyboard key (InputType::Right)',
+            'note':  'analog steer (InputType::Steer) requires joystick/vJoy binding — not available',
         },
         'results': results
     }
@@ -457,16 +462,16 @@ Examples:
     parser.add_argument('--port', type=int, default=8476,
                         help='TCP port for AgenticBridge.as plugin (default: 8476)')
     parser.add_argument('--steering-only', action='store_true',
-                        help='Only run steering discovery (skip gas/brake)')
+                        help='Only run left/right steering discovery (skip gas/brake)')
     parser.add_argument('--actions', type=str, default=None,
-                        help='Comma-separated actions to discover (e.g. gas,steering)')
+                        help='Comma-separated actions to discover (e.g. gas,left,right)')
     args = parser.parse_args()
 
     use_rewind = not args.no_rewind
 
     # Determine which actions to discover
     if args.steering_only:
-        actions_to_run = ['steering']
+        actions_to_run = ['left', 'right']
     elif args.actions:
         actions_to_run = [a.strip() for a in args.actions.split(',')]
     else:
@@ -491,10 +496,7 @@ Examples:
     print(f"  Port:        {args.port}")
     print(f"  Actions:     {actions_to_run}")
     print()
-    print("  TMNF input facts:")
-    print("    Gas:      BINARY (2 bins expected)")
-    print("    Brake:    BINARY (2 bins expected)")
-    print("    Steering: ANALOG (full sweep, ~21+ bins expected)")
+    print("  Input types will be DISCOVERED by the algorithm (not assumed)")
     print()
 
     # Connect

@@ -94,7 +94,11 @@
     "adapter": "adapters.tmnf_adapter.TMNFAdapter",
     "protocol": "tcp",
     "host": "127.0.0.1",
-    "port": 8476
+    "port": 8476,
+    "timing": {
+      "frame_duration_ms": 10,
+      "note": "Discovered from environment by SystemInitializer (INIT-06). This value is a fallback only."
+    }
   },
 
   "experimentation": {
