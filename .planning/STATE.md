@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-03 - Completed quick task 10: 5-run two-stage validation script (awaiting live test)
+Last activity: 2026-03-03 - Completed quick task 10: 5-run two-stage validation (46/46 PASS, all deterministic)
 
 Progress: [██████░░░░] 58%
 
@@ -167,7 +167,7 @@ None.
 | 6 | Analyze MIN/MAX discovery results against Sutton spec + create 7-sheet probe-level Excel report from 5 normal-speed runs | 2026-03-03 | — | [6-analyze-min-max-discovery-results-agains](./quick/6-analyze-min-max-discovery-results-agains/) |
 | 8 | Multi-speed binary proof + extended range MIN probing + analog gas axis fact-check | 2026-03-03 | 876958e | [8-multi-speed-binary-proof-fact-check-vali](./quick/8-multi-speed-binary-proof-fact-check-vali/) |
 | 9 | Full Sutton transcript audit (25/25 REQs) + two-stage binary/analog discovery model | 2026-03-03 | f239131 | [9-full-sutton-meeting-transcript-audit-imp](./quick/9-full-sutton-meeting-transcript-audit-imp/) |
-| 10 | 5-run two-stage validation script (awaiting live TMNF test) | 2026-03-03 | 77d9ef4 | [10-run-5-live-discovery-runs-with-two-stage](./quick/10-run-5-live-discovery-runs-with-two-stage/) |
+| 10 | 5-run two-stage validation: 46/46 PASS, all actions BINARY, deterministic, Sutton compliant | 2026-03-03 | de775e1 | [10-run-5-live-discovery-runs-with-two-stage](./quick/10-run-5-live-discovery-runs-with-two-stage/) |
 
 ## Session Continuity
 
