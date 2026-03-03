@@ -407,16 +407,28 @@ class _TMNFSocketClient:
         Send CSetInputState (extended protocol with analog steer).
 
         Layout: [int32 type][uint8 left][uint8 right][uint8 accel][uint8 brake][int32 steer]
+
+        Faithful uint8 quantization (Sutton: "first find the system's precision"):
+          float [0,1] -> round(val * 255) -> uint8 [0,255]
+          The plugin treats uint8 > 0 as ON, so the TRUE system boundary
+          is at the rounding threshold: ~1/510 rounds to 0, ~1/255 rounds to 1.
+          Discovery finds this boundary at ~0.00392 (1/255) instead of the
+          old hardcoded > 0.0 which hid the real wire resolution.
         """
         gas_val   = action.get('gas', 0.0)
         brake_val = action.get('brake', 0.0)
         steer_val = action.get('steering', 0.0)
 
-        # TMNF gas and brake are BINARY
-        accel = np.uint8(1 if gas_val > 0.001 else 0)
-        brake = np.uint8(1 if brake_val > 0.001 else 0)
-        left  = np.uint8(0)
-        right = np.uint8(0)
+        # Faithful uint8 quantization — no hardcoded > 0.0 threshold.
+        # The discovery algorithm finds the real boundary at ~1/255 = 0.00392.
+        # (Sutton: "bins figured out by the system")
+        accel = np.uint8(min(255, max(0, round(gas_val * 255))))
+        brake = np.uint8(min(255, max(0, round(brake_val * 255))))
+
+        # Digital left/right steering (Linesight-RL compatible, faithful uint8)
+        left  = np.uint8(min(255, max(0, round(action.get('left', 0) * 255))))
+        right = np.uint8(min(255, max(0, round(action.get('right', 0) * 255))))
+
         steer = np.int32(float_to_steer(steer_val))
 
         payload = struct.pack(
@@ -502,10 +514,16 @@ class TMNFAdapter:
       is_connected()         -> bool
       stop()                 -> disconnect and clean up
 
-    TMNF Input facts:
-      gas:      0.0/1.0 binary threshold (>0.001 = full gas)
-      brake:    0.0/1.0 binary threshold (>0.001 = full brake)
-      steering: -1.0 to +1.0 maps to -65536 to +65536 analog
+    TMNF Input quantization (faithful uint8):
+      gas:      float [0,1] -> round(val*255) -> uint8 [0,255]
+                Plugin: uint8 > 0 = gas ON. Boundary at ~1/255 = 0.00392.
+      brake:    float [0,1] -> round(val*255) -> uint8 [0,255]
+                Plugin: uint8 > 0 = brake ON. Boundary at ~1/255 = 0.00392.
+      left:     float [0,1] -> round(val*255) -> uint8 [0,255]
+                Plugin: uint8 > 0 = key ON. Boundary at ~1/255 = 0.00392.
+      right:    float [0,1] -> round(val*255) -> uint8 [0,255]
+                Plugin: uint8 > 0 = key ON. Boundary at ~1/255 = 0.00392.
+      steering: float [-1,+1] -> int(val*65536) -> int32 [-65536,+65536]
 
     Threading model:
       Background thread (_recv_thread) runs _TMNFSocketClient.run_receive_loop().
@@ -620,6 +638,8 @@ class TMNFAdapter:
             'gas':      action.get('gas', 0.0),
             'brake':    action.get('brake', 0.0),
             'steering': action.get('steering', 0.0),
+            'left':     action.get('left', 0.0),
+            'right':    action.get('right', 0.0),
         }
         return True
 
@@ -733,6 +753,52 @@ class TMNFAdapter:
             'actions_applied': self._client.actions_applied,
             'has_saved_state': self._client._saved_state is not None,
             'port':            self._client._port,
+        }
+
+    def get_wire_precision(self) -> Dict[str, Dict[str, Any]]:
+        """Return wire precision metadata for each action channel.
+
+        PURE DATA method (no TCP connection needed). Reports the known
+        wire format from the AgenticBridge.as protocol:
+          - gas/brake/left/right: uint8 [0, 255], float step = 1/255
+          - steering: int32 [-65536, +65536], float step = 1/65536
+
+        Sutton: "First, find the system's precision. Based on that,
+        find what is small and what is large."
+
+        Returns dict keyed by action channel name. Each value contains:
+          wire_type:  str   ('uint8' or 'int32')
+          wire_bits:  int   (8 or 32)
+          wire_min:   int   (0 or -65536)
+          wire_max:   int   (255 or 65536)
+          float_min:  float (0.0 or -1.0)
+          float_max:  float (1.0)
+          float_step: float (1/255 or 1/65536)
+        """
+        uint8_info = {
+            'wire_type':  'uint8',
+            'wire_bits':  8,
+            'wire_min':   0,
+            'wire_max':   255,
+            'float_min':  0.0,
+            'float_max':  1.0,
+            'float_step': 1.0 / 255,
+        }
+        int32_steer_info = {
+            'wire_type':  'int32',
+            'wire_bits':  32,
+            'wire_min':   -ANALOG_MAX,
+            'wire_max':   ANALOG_MAX,
+            'float_min':  -1.0,
+            'float_max':  1.0,
+            'float_step': 1.0 / ANALOG_MAX,
+        }
+        return {
+            'gas':      dict(uint8_info),
+            'brake':    dict(uint8_info),
+            'left':     dict(uint8_info),
+            'right':    dict(uint8_info),
+            'steering': dict(int32_steer_info),
         }
 
     def stop(self):
