@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-01 - Completed quick task 5: Sutton compliance audit documentation + code fixes
+Last activity: 2026-03-03 - Completed quick task 8: Multi-speed binary proof + extended range + analog gas fact-check
 
 Progress: [██████░░░░] 58%
 
@@ -157,9 +157,11 @@ None.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 5 | Sutton compliance audit documentation + code fixes for frame duration, tick measurement, rewind, exponential sequence, precision, steering ticks, D0 explanation, and adapter threshold | 2026-03-01 | a2d72fd | [5-sutton-compliance-audit-documentation-co](./quick/5-sutton-compliance-audit-documentation-co/) |
+| 6 | Analyze MIN/MAX discovery results against Sutton spec + create 7-sheet probe-level Excel report from 5 normal-speed runs | 2026-03-03 | — | [6-analyze-min-max-discovery-results-agains](./quick/6-analyze-min-max-discovery-results-agains/) |
+| 8 | Multi-speed binary proof + extended range MIN probing + analog gas axis fact-check | 2026-03-03 | 876958e | [8-multi-speed-binary-proof-fact-check-vali](./quick/8-multi-speed-binary-proof-fact-check-vali/) |
 
 ## Session Continuity
 
-Last session: 2026-03-01
-Stopped at: Completed quick-5 (Sutton Compliance Audit) -- Phase 3 complete, Phase 4 next
+Last session: 2026-03-03
+Stopped at: Completed quick-8 (Multi-speed binary proof) -- Phase 3 complete, Phase 4 next
 Resume file: None
