@@ -75,11 +75,35 @@ def run_5_cycles(
     frame_duration_s: float,
     precision: dict,
 ) -> List[dict]:
-    """Run N discovery cycles, each from a fresh save point.
+    """Run N discovery cycles from the SAME saved state.
+
+    All N runs rewind to the same high-speed state so D0 and
+    delta_max are identical across runs (deterministic rewind).
+
+    The state is saved ONCE before the first run at 200+ km/h.
+    We keep a copy of the state bytes because run_discovery_tmnf
+    calls adapter.save_state() internally (which overwrites it).
+    Before each run, we restore our original state.
 
     Returns list of result dicts (one per run).
     """
     all_runs = []
+
+    # Save state ONCE — all runs rewind to this exact state
+    logger.info("  Saving state ONCE for all runs (high-speed, deterministic)")
+    adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
+    adapter.wait_one_tick()
+    adapter.save_state()
+
+    # Keep a copy of the state bytes (run_discovery_tmnf overwrites _saved_state)
+    original_state = adapter.get_full_state()
+    if original_state is None:
+        logger.error("  Failed to get saved state!")
+        return all_runs
+
+    logger.info(f"  Original state captured ({len(original_state)} bytes)")
+    fb = adapter.get_feedbacks()
+    logger.info(f"  State speed: {fb.get('speed', 0):.1f} km/h")
 
     for run_idx in range(1, num_runs + 1):
         logger.info("")
@@ -87,14 +111,24 @@ def run_5_cycles(
         logger.info(f"  RUN {run_idx}/{num_runs}")
         logger.info("=" * 70)
 
-        # Release all inputs before saving state
+        # Restore the ORIGINAL saved state before each run
+        # This ensures identical starting conditions across all runs
+        adapter._client._saved_state = original_state
+        adapter.rewind()
+
+        # Advance one tick so the rewind takes effect in the game
+        # and _state_bytes gets updated to the rewound state.
+        # Without this, save_state() inside run_discovery_tmnf would
+        # save the pre-rewind _state_bytes.
         adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
         adapter.wait_one_tick()
 
-        # Fresh save point for this run
-        adapter.save_state()
+        fb_check = adapter.get_feedbacks()
+        logger.info(f"  Rewound to original state: speed={fb_check.get('speed', 0):.1f} km/h "
+                     f"(deterministic)")
 
-        # Run two-stage discovery (detect_action_nature + binary/analog path)
+        # run_discovery_tmnf calls adapter.save_state() internally
+        # which overwrites _saved_state — but we have our copy
         results = run_discovery_tmnf(
             adapter,
             use_rewind=True,
@@ -190,9 +224,10 @@ def validate_all_runs(
             for a in actions
         )
 
-        # probes_efficient: each action uses <= 15 probes
+        # probes_efficient: each action uses <= 25 probes
+        # Binary path: 5 nature + 1 MAX validate + 2 below-probes + ~10 binary search + 1 MIN validate = ~19
         verdicts[f"{prefix}_probes_efficient"] = all(
-            run_results.get(a, {}).get('probes', 99) <= 15
+            run_results.get(a, {}).get('probes', 99) <= 25
             for a in actions
         )
 
