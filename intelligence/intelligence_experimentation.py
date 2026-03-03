@@ -428,6 +428,8 @@ class FrameBinDiscovery:
         # Step 1: Measure D0
         logger.info(f"  [STEP 1] Measure D0 = step(action=0)")
         d0_probe = probe_fn(0.0)
+        if d0_probe not in self.probes:
+            self.probes.append(d0_probe)
         if d0_probe.valid:
             self.delta_0 = d0_probe.delta_state
         else:
@@ -442,6 +444,8 @@ class FrameBinDiscovery:
 
         for val in probes:
             pr = probe_fn(val)
+            if pr not in self.probes:
+                self.probes.append(pr)
             if not pr.valid:
                 logger.info(f"    nature probe a={val:.6g} -> INVALID (skipped)")
                 continue
