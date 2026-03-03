@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-03 - Completed quick task 10: 5-run two-stage validation (46/46 PASS, all deterministic)
+Last activity: 2026-03-03 - Completed quick task 11: Precision-first discovery rewrite (wire precision API, faithful uint8 quantization, derived probes, wire-step MIN floor)
 
 Progress: [██████░░░░] 58%
 
@@ -150,6 +150,10 @@ Recent decisions affecting current work:
 - [quick-10]: Reuse all discovery functions from test_phase_a_tmnf.py (no code duplication in validation script)
 - [quick-10]: No Excel/openpyxl dependency -- JSON + terminal report only
 - [quick-10]: Cross-reference with multi_speed_binary_proof is optional (--no-cross-ref flag)
+- [quick-11]: Faithful uint8 quantization: round(val * 255) instead of hardcoded > 0.0 threshold
+- [quick-11]: Wire precision is pure data (no TCP needed) -- adapter always knows its wire format
+- [quick-11]: Nature detection appends probes to self.probes for internal consistency (bug fix)
+- [quick-11]: Wire step floor uses max(search_precision, wire_step) then restores original after binary search
 
 ### Pending Todos
 
@@ -168,9 +172,10 @@ None.
 | 8 | Multi-speed binary proof + extended range MIN probing + analog gas axis fact-check | 2026-03-03 | 876958e | [8-multi-speed-binary-proof-fact-check-vali](./quick/8-multi-speed-binary-proof-fact-check-vali/) |
 | 9 | Full Sutton transcript audit (25/25 REQs) + two-stage binary/analog discovery model | 2026-03-03 | f239131 | [9-full-sutton-meeting-transcript-audit-imp](./quick/9-full-sutton-meeting-transcript-audit-imp/) |
 | 10 | 5-run two-stage validation: 46/46 PASS, all actions BINARY, deterministic, Sutton compliant | 2026-03-03 | de775e1 | [10-run-5-live-discovery-runs-with-two-stage](./quick/10-run-5-live-discovery-runs-with-two-stage/) |
+| 11 | Precision-first discovery rewrite: wire precision API, faithful uint8 quantization, derived probes, wire-step MIN floor, 6/6 offline tests PASS | 2026-03-03 | ec65210 | [11-full-precision-first-rewrite-discover-sy](./quick/11-full-precision-first-rewrite-discover-sy/) |
 
 ## Session Continuity
 
 Last session: 2026-03-03
-Stopped at: Completed quick-10 Task 1 (script created). Task 2 (checkpoint:human-verify) awaits live TMNF test.
+Stopped at: Completed quick-11 (precision-first discovery rewrite). All 3 tasks done, 6/6 offline tests PASS.
 Resume file: None
