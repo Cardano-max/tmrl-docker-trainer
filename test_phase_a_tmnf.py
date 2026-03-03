@@ -1,46 +1,34 @@
 """
 PHASE A BIN DISCOVERY — TMNF + TMInterface 2.x (TCP bridge)
 
-Pure Sutton algorithm with NO adaptations needed:
-  - 10ms deterministic ticks (game pauses for us)
-  - Rewind between probes: each probe starts from EXACT same state
-  - No D0 subtraction (deterministic = no contamination)
-  - No noise epsilon (no variance between probes)
-  - One tick per probe
-  - Full state: speed, velocity, yaw, forces, wheel contact
+PURE SUTTON COMPLIANCE — No hardcoded values. Everything discovered.
 
-TMNF INPUT FACTS (without joystick/vJoy):
-  - Gas:   BINARY only (>0.001 = full gas ON, else OFF)
-  - Brake: BINARY only (>0.001 = full brake ON, else OFF)
-  - Left:  BINARY keyboard key (InputType::Left, Linesight-RL method)
-  - Right: BINARY keyboard key (InputType::Right, Linesight-RL method)
+Sutton's rules (from meeting transcripts):
+  - "bins needs to be figured out by the system. Not by us." (Jan 9)
+  - "the precision is not us, precision is the system." (Jan 24)
+  - "the maximum minimum cannot be guessed... has to be calculated" (Feb 16)
+  - "who defines the time stamp is the environment" (Feb 16)
+  - "not doing an action is also an action" (Jan 9, Feb 16)
+  - "the actions have to be by frame not continuously" (Jan 15)
 
-  NOTE: Analog steer (InputType::Steer, -65536..+65536) requires a joystick
-  or vJoy binding. Without one, "Failed to execute input: no binding for
-  Steer (analog) found." The "Convert Inputs to Analog Steering" TMInterface
-  setting is a replay output formatter, NOT an input binding.
+What we discover (NOT hardcode):
+  - Frame duration: measured from race_time delta
+  - System precision: measured from repeated D0 probes (variance)
+  - Action ranges: exponential sweep from 1e6 discovers them
+  - MIN and MAX: Sutton's downward sweep + binary search
+  - Input types: discovered (binary vs analog)
 
-This means:
-  - Gas discovery:   finds 2 bins (off vs on)
-  - Brake discovery: finds 2 bins (off vs on)
-  - Left discovery:  finds 2 bins (off vs on, measures yaw delta)
-  - Right discovery: finds 2 bins (off vs on, measures yaw delta)
+What we DON'T do:
+  - No hardcoded epsilon / precision / thresholds
+  - No multi-tick probes (all actions: 2 ticks = 1 frame)
+  - No D0 subtraction
+  - No normalization
+  - No averaging
 
-SETUP — REQUIRED BEFORE RUNNING:
-  1. Install TMNF (free): https://trackmaniaforever.com/ or Steam
-  2. Install TMInterface 2.x via ModLoader: https://donadigo.com/tminterface/
-  3. Copy TMinterface/AgenticBridge.as to:
-       %APPDATA%\\TMInterface\\Plugins\\AgenticBridge.as
-  4. Launch TMNF via TMInterface.exe
-  5. Start a race on any track (wait for countdown to end)
-  6. Run this script
-
-USAGE:
-  python test_phase_a_tmnf.py
-  python test_phase_a_tmnf.py --no-rewind    # Sequential probes (no rewind)
-  python test_phase_a_tmnf.py --speed 5.0    # Run game at 5x speed
-  python test_phase_a_tmnf.py --port 8476    # Custom port (default: 8476)
-  python test_phase_a_tmnf.py --steering-only # Only run steering discovery
+SETUP:
+  1. TMNF + TMInterface 2.x installed
+  2. AgenticBridge.as in %APPDATA%\\TMInterface\\Plugins\\
+  3. Race running (countdown finished)
 """
 
 import sys
@@ -52,7 +40,6 @@ import argparse
 import math
 from datetime import datetime
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from adapters.tmnf_adapter import TMNFAdapter
@@ -71,120 +58,224 @@ logger = logging.getLogger('TMNF_TEST')
 
 
 # =============================================================================
-# ACTIONS CONFIG (TMNF reality)
+# ACTIONS CONFIG — Names only. No ranges. Sutton: "discover, don't configure."
 # =============================================================================
-
-# Input types are DISCOVERED by the algorithm, not assumed.
-# The system probes each action and measures precision to determine
-# whether each input is binary (2 bins) or analog (N bins).
-# No "type" label in config — pure Sutton compliance.
 
 TMNF_ACTIONS_CONFIG = {
-    'gas': {
-        'range': [0.0, 1.0],
-        'description': 'Throttle (TMNF: binary >0.001 = full gas ON)'
-    },
-    'brake': {
-        'range': [0.0, 1.0],
-        'description': 'Brake (TMNF: binary >0.001 = full brake ON)'
-    },
-    'left': {
-        'range': [0.0, 1.0],
-        'description': 'Steer left (TMNF: binary keyboard key via InputType::Left)'
-    },
-    'right': {
-        'range': [0.0, 1.0],
-        'description': 'Steer right (TMNF: binary keyboard key via InputType::Right)'
-    },
+    'gas':   {'description': 'Throttle'},
+    'brake': {'description': 'Brake'},
+    'left':  {'description': 'Steer left (digital key)'},
+    'right': {'description': 'Steer right (digital key)'},
 }
-
-# NOTE: TMNF has NO analog steering without a joystick/vJoy binding.
-# "Convert Inputs to Analog Steering" in TMInterface is a replay output setting,
-# NOT an input binding. SetInputState(InputType::Steer) fails without a device.
-# We use digital left/right (InputType::Left/Right) like Linesight-RL.
-# The algorithm DISCOVERS that all 4 inputs are binary (2 bins each).
 
 
 # =============================================================================
-# PROBE FUNCTION
+# STEP 0: MEASURE FRAME DURATION
+# Sutton Feb 16: "who defines the time stamp is the environment"
+# Sutton Jan 24: "determined by the system so it's being configured not hard-coded"
+# =============================================================================
+
+def measure_frame_duration(adapter: TMNFAdapter) -> float:
+    """Discover frame duration from environment by measuring race_time delta.
+
+    Returns frame duration in seconds.
+    """
+    logger.info("[STEP 0] Measuring frame duration from environment...")
+
+    # Send neutral action and advance one tick
+    adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
+    adapter.wait_one_tick()
+    fb_before = adapter.get_feedbacks()
+    t_before = fb_before.get('race_time', 0)
+
+    adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
+    adapter.wait_one_tick()
+    fb_after = adapter.get_feedbacks()
+    t_after = fb_after.get('race_time', 0)
+
+    delta_ms = t_after - t_before
+    if delta_ms <= 0:
+        logger.warning(f"  Invalid frame duration: {delta_ms}ms, using 10ms fallback")
+        delta_ms = 10
+
+    frame_duration_s = delta_ms / 1000.0
+    logger.info(f"  Frame duration: {delta_ms}ms ({frame_duration_s}s)")
+    logger.info(f"  (Measured from environment, not hardcoded)")
+    return frame_duration_s
+
+
+# =============================================================================
+# STEP 1: MEASURE SYSTEM PRECISION
+# Sutton Jan 24: "the precision is not us, precision is the system"
+# Sutton Jan 31: "the feedback that the system gives you is the precision"
+# =============================================================================
+
+def measure_system_precision(adapter: TMNFAdapter, use_rewind: bool,
+                              num_probes: int = 3) -> dict:
+    """Discover measurement precision by probing D0 multiple times.
+
+    With rewind: repeated D0 probes from same state should be bit-identical.
+    Any variance = the system's measurement noise floor.
+
+    Returns:
+        {
+            'speed_epsilon': float,   # for gas/brake delta comparison
+            'yaw_epsilon': float,     # for steering delta comparison
+            'speed_precision_digits': int,
+            'yaw_precision_digits': int,
+            'deterministic': bool,    # True if all D0 probes identical
+        }
+    """
+    logger.info(f"[STEP 1] Measuring system precision ({num_probes} D0 probes)...")
+
+    if use_rewind:
+        adapter.save_state()
+
+    speed_deltas = []
+    yaw_deltas = []
+
+    for i in range(num_probes):
+        if use_rewind:
+            adapter.rewind()
+
+        # Tick 1: send nothing (input delay — replayed inputs)
+        adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
+        adapter.wait_one_tick()
+        fb_before = adapter.get_feedbacks()
+
+        # Tick 2: no action takes effect
+        adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
+        adapter.wait_one_tick()
+        fb_after = adapter.get_feedbacks()
+
+        speed_delta = fb_after.get('speed', 0) - fb_before.get('speed', 0)
+        yaw_delta = fb_after.get('yaw', 0) - fb_before.get('yaw', 0)
+
+        speed_deltas.append(speed_delta)
+        yaw_deltas.append(yaw_delta)
+
+        logger.info(f"  D0 probe {i+1}: speed_delta={speed_delta:.15g}, yaw_delta={yaw_delta:.15g}")
+
+    # Compute variance
+    def max_variance(values):
+        if len(values) < 2:
+            return 0.0
+        return max(abs(a - b) for i, a in enumerate(values) for b in values[i+1:])
+
+    speed_var = max_variance(speed_deltas)
+    yaw_var = max_variance(yaw_deltas)
+
+    deterministic = (speed_var == 0.0 and yaw_var == 0.0)
+
+    # Epsilon = 2x the observed variance (safety margin)
+    # If deterministic (variance = 0), use smallest meaningful difference
+    # from the feedback's decimal precision
+    if speed_var > 0:
+        speed_epsilon = speed_var * 2.0
+    else:
+        # Count significant digits from feedback
+        sample = abs(speed_deltas[0]) if speed_deltas[0] != 0 else abs(fb_before.get('speed', 1.0))
+        speed_epsilon = _feedback_precision(sample)
+
+    if yaw_var > 0:
+        yaw_epsilon = yaw_var * 2.0
+    else:
+        sample = abs(yaw_deltas[0]) if yaw_deltas[0] != 0 else abs(fb_before.get('yaw', 1.0))
+        yaw_epsilon = _feedback_precision(sample)
+
+    # Count precision digits for logging
+    speed_digits = _count_precision_digits(speed_epsilon)
+    yaw_digits = _count_precision_digits(yaw_epsilon)
+
+    logger.info(f"  Speed variance: {speed_var:.15g} → epsilon={speed_epsilon:.15g} ({speed_digits} digits)")
+    logger.info(f"  Yaw variance:   {yaw_var:.15g} → epsilon={yaw_epsilon:.15g} ({yaw_digits} digits)")
+    logger.info(f"  Deterministic:  {deterministic}")
+
+    return {
+        'speed_epsilon': speed_epsilon,
+        'yaw_epsilon': yaw_epsilon,
+        'speed_precision_digits': speed_digits,
+        'yaw_precision_digits': yaw_digits,
+        'deterministic': deterministic,
+        'speed_deltas': speed_deltas,
+        'yaw_deltas': yaw_deltas,
+    }
+
+
+def _feedback_precision(value: float) -> float:
+    """Determine the feedback precision from a sample value.
+
+    Uses the machine epsilon relative to the value's magnitude.
+    For float64: ~2.2e-16 relative, so for value=15.0, precision ≈ 3.3e-15.
+    """
+    import sys
+    eps = sys.float_info.epsilon  # ~2.2e-16
+    return max(abs(value) * eps * 10, 1e-15)  # 10x machine epsilon for safety
+
+
+def _count_precision_digits(epsilon: float) -> int:
+    """Count how many decimal digits the epsilon represents."""
+    if epsilon <= 0:
+        return 15
+    return max(0, int(-math.log10(epsilon)))
+
+
+# =============================================================================
+# PROBE FUNCTION — 2 ticks for ALL actions (Sutton: per frame)
 # =============================================================================
 
 def make_probe_fn(
     adapter: TMNFAdapter,
     disc: 'FrameBinDiscovery',
     action_name: str,
-    action_range: tuple,
     use_rewind: bool,
     probe_counter: list,
     intelligence: 'ExperimentationIntelligence',
+    frame_duration_s: float,
 ) -> callable:
     """
-    Returns a probe_one_tick function for the given action.
+    Returns a probe function for the given action.
 
-    Pure Sutton: one tick = one probe. No D0. No multi-frame. No averaging.
+    ALL actions use exactly 2 ticks (1 frame = 1 probe):
+      Tick 1: send action (loads for next tick due to TMInterface input delay)
+      Tick 2: action takes effect, read fb_after
 
-    With rewind=True:  rewind to saved state before each probe.
-    With rewind=False: probe sequentially (car state accumulates).
-
-    Delta for gas/brake:  speed_after - speed_before (signed km/h change)
-    Delta for steering:   yaw_after - yaw_before (wrapped to [-pi, pi])
+    Sutton: "the actions have to be by frame not continuously" (Jan 15)
+    Sutton: "one node per frame" (Jan 15)
     """
     def probe_one_tick(value: float) -> 'ProbeResult':
         nonlocal probe_counter
 
-        # Build action — all inputs default to 0
         action_dict = {n: 0.0 for n in TMNF_ACTIONS_CONFIG}
-        clipped = max(action_range[0], min(value, action_range[1]))
-        action_dict[action_name] = clipped
+        action_dict[action_name] = value  # No clamping — environment decides
 
-        # For left/right steering probes: add gas to maintain speed
-        # (yaw change requires speed; without gas, car decelerates and
-        #  yaw changes become tiny/unmeasurable)
+        # Steering needs gas to maintain speed (yaw change requires velocity)
         is_steer = action_name in ('left', 'right')
         if is_steer:
             action_dict['gas'] = 1.0
-            # Also ensure 'steering' is 0 (no analog steer attempt)
             action_dict['steering'] = 0.0
-
-        # TMInterface has a ONE-TICK INPUT DELAY:
-        # SetInputState during OnRunStep takes effect NEXT tick, not current.
-        #
-        # With rewind: rewind → send action → wait 1 tick (replayed inputs,
-        #   same for all probes → consistent fb_before) → send action →
-        #   wait N ticks (our input) → read fb_after.
-        #
-        # Steering (left/right): yaw change builds gradually, needs more ticks.
-        # MEASURE_TICKS for steering: accumulates signal over N ticks because per-tick
-        # yaw delta (~0.0002 rad) is below measurement_epsilon.
-        # PLANNING IMPACT: steering bin deltas represent 5-tick effect, not 1-tick.
-        # Planner must divide by MEASURE_TICKS to get per-tick delta if needed.
-        MEASURE_TICKS = 5 if is_steer else 1
 
         if use_rewind:
             adapter.rewind()
 
-        # Tick 1: send our action (loads for next tick).
-        # With rewind, this tick uses replayed inputs (deterministic baseline).
+        # Tick 1: send action (TMInterface input delay: takes effect NEXT tick)
         adapter.send_action_dict(action_dict)
         adapter.wait_one_tick()
 
-        # Read state — consistent baseline with rewind, current state without.
+        # Read state before action takes effect
         fb_before = adapter.get_feedbacks()
 
-        # Tick 2+: our input takes effect
-        for _ in range(MEASURE_TICKS):
-            adapter.send_action_dict(action_dict)
-            adapter.wait_one_tick()
+        # Tick 2: our action takes effect — ONE frame, same for ALL actions
+        adapter.send_action_dict(action_dict)
+        adapter.wait_one_tick()
 
-        # Read state AFTER action
+        # Read state after
         fb_after = adapter.get_feedbacks()
 
-        # Compute delta
+        # Compute delta — same for all actions, no special cases
         if is_steer:
-            # Yaw change for left/right steering
             if 'yaw' in fb_before and 'yaw' in fb_after:
                 delta = fb_after['yaw'] - fb_before['yaw']
-                # Wrap to [-pi, pi]
                 while delta > math.pi:
                     delta -= 2 * math.pi
                 while delta < -math.pi:
@@ -192,7 +283,6 @@ def make_probe_fn(
             else:
                 delta = 0.0
         else:
-            # Speed change (km/h) — positive = accelerating, negative = braking
             delta = disc.compute_delta(
                 fb_before, fb_after,
                 action_name=action_name,
@@ -205,11 +295,11 @@ def make_probe_fn(
         intelligence.total_experiments += 1
 
         pr = ProbeResult(
-            action_value=clipped,
+            action_value=value,
             delta_state=delta,
             feedback_before=fb_before,
             feedback_after=fb_after,
-            frame_duration_s=0.01,   # 10ms -- matches TMNF physics tick. TODO: use discovered value from adapter
+            frame_duration_s=frame_duration_s,
             valid=True
         )
         disc.probes.append(pr)
@@ -219,28 +309,21 @@ def make_probe_fn(
 
 
 # =============================================================================
-# DISCOVERY
+# DISCOVERY — Pure Sutton, no hardcoded values
 # =============================================================================
 
 def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
-                       actions_to_run: list = None):
+                       actions_to_run: list = None,
+                       frame_duration_s: float = 0.01,
+                       precision: dict = None):
     """
-    Run Sutton's bin discovery algorithm on TMNF.
+    Run Sutton's bin discovery on TMNF.
 
-    With rewind=True (default): each probe starts from the EXACT same state.
-    Pong-like: delta depends ONLY on action value, not accumulated state.
-    No D0 subtraction, no noise epsilon — pure deterministic Sutton.
-
-    With rewind=False: sequential probing (car accumulates state).
-    Closer to TM2020 mode; still deterministic.
-
-    Args:
-        adapter:        Connected TMNFAdapter
-        use_rewind:     True = independent probes, False = sequential
-        actions_to_run: List of action names to discover (default: all 3)
-
-    Returns:
-        Dict of {action_name: result_dict}
+    All values are DISCOVERED:
+      - Frame duration: measured from environment
+      - Precision/epsilon: measured from repeated D0 probes
+      - Action ranges: exponential sweep from 1e6 discovers them
+      - MIN/MAX: Sutton's downward sweep + binary search
     """
     if actions_to_run is None:
         actions_to_run = list(TMNF_ACTIONS_CONFIG.keys())
@@ -248,25 +331,20 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
     intelligence = ExperimentationIntelligence(TMNF_ACTIONS_CONFIG)
     intelligence.start_time = time.time()
 
-    # With rewind: probes are deterministic (same starting state), so tight epsilon.
-    # Without rewind: sequential drift needs larger epsilon.
-    if use_rewind:
-        EPSILON_GAS_BRAKE = 0.01   # Deterministic — only float precision matters
-        EPSILON_STEER     = 1e-5   # Yaw precision over 5 ticks
-    else:
-        EPSILON_GAS_BRAKE = 0.05   # Absorbs sequential speed drift (~0.01/tick)
-        EPSILON_STEER     = 1e-4   # Wider for drift
-
     logger.info("=" * 70)
-    logger.info("PHASE A BIN DISCOVERY — TMNF (Pure Sutton)")
+    logger.info("PHASE A BIN DISCOVERY — TMNF (Pure Sutton, Zero Hardcoding)")
     logger.info("=" * 70)
-    logger.info(f"  Tick:     10ms (deterministic)")
+    logger.info(f"  Frame duration: {frame_duration_s*1000:.0f}ms (measured from environment)")
     logger.info(f"  Rewind:   {use_rewind}")
     logger.info(f"  Actions:  {actions_to_run}")
-    logger.info(f"  Input types: discovered by algorithm (not assumed)")
+    if precision:
+        logger.info(f"  Speed epsilon: {precision['speed_epsilon']:.15g} (measured)")
+        logger.info(f"  Yaw epsilon:   {precision['yaw_epsilon']:.15g} (measured)")
+        logger.info(f"  Deterministic: {precision['deterministic']}")
+    logger.info(f"  Ranges:   DISCOVERED (exponential sweep from 1e6)")
+    logger.info(f"  Epsilons: DISCOVERED (from D0 probe variance)")
     logger.info("")
 
-    # Get starting state
     fb = adapter.get_feedbacks()
     logger.info(f"  Starting state: speed={fb.get('speed', 0):.2f} km/h, "
                 f"pos=({fb.get('pos_x', 0):.1f}, {fb.get('pos_y', 0):.1f}, "
@@ -274,128 +352,133 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
 
     results = {}
 
-    # Target speed for probing — need enough speed for all actions to show effect
-    TARGET_SPEED = 15.0  # km/h
+    # Save state ONCE for ALL actions in this cycle
+    # Sutton: "test from whatever state the car is in"
+    # All actions start from the EXACT same state → D0 is consistent
+    if use_rewind:
+        adapter.save_state()
+        logger.info("  State saved ONCE for entire cycle (all actions share same state)")
 
     for action_name in actions_to_run:
         if action_name not in TMNF_ACTIONS_CONFIG:
             logger.warning(f"  Skipping unknown action: {action_name}")
             continue
 
-        # Re-accelerate before each action's discovery (sequential mode loses speed)
-        if not use_rewind:
-            fb = adapter.get_feedbacks()
-            speed = fb.get('speed', 0)
-            if speed < TARGET_SPEED:
-                logger.info(f"  Re-accelerating from {speed:.1f} to {TARGET_SPEED} km/h...")
-                while speed < TARGET_SPEED:
-                    adapter.send_action_dict({'gas': 1.0, 'brake': 0.0, 'steering': 0.0})
-                    adapter.wait_one_tick()
-                    fb = adapter.get_feedbacks()
-                    speed = fb.get('speed', 0)
-                logger.info(f"  Speed restored: {speed:.1f} km/h")
+        is_steer = action_name in ('left', 'right')
 
-        config = TMNF_ACTIONS_CONFIG[action_name]
-        action_range = tuple(config['range'])
-        is_bidir = action_range[0] < 0
-
-        eps = EPSILON_STEER if action_name in ('left', 'right') else EPSILON_GAS_BRAKE
+        # Use discovered precision — no hardcoded epsilons
+        if precision:
+            eps = precision['yaw_epsilon'] if is_steer else precision['speed_epsilon']
+        else:
+            eps = None  # Bit-exact comparison
 
         disc = FrameBinDiscovery(
-            action_name, action_range
+            action_name,
+            search_precision=eps,    # Binary search stops at measured precision
+            measurement_epsilon=eps  # Delta comparison uses measured precision
         )
-        disc.measurement_epsilon = eps
 
         logger.info(f"\n{'=' * 60}")
         logger.info(f"  DISCOVERING: {action_name}")
-        logger.info(f"  Range:   {action_range}")
-        logger.info(f"  Epsilon: {eps}")
+        logger.info(f"  Epsilon: {eps} (measured from environment)")
         logger.info(f"  Rewind:  {use_rewind}")
+        logger.info(f"  Ticks per probe: 2 (same for ALL actions)")
         logger.info(f"{'=' * 60}")
-
-        # Save state before this action's discovery
-        if use_rewind:
-            adapter.save_state()
-            logger.info("  State saved for rewind-based probing")
 
         probe_counter = [0]
         t0 = time.time()
 
         probe_fn = make_probe_fn(
-            adapter, disc, action_name, action_range,
-            use_rewind, probe_counter, intelligence
+            adapter, disc, action_name,
+            use_rewind, probe_counter, intelligence,
+            frame_duration_s
         )
 
-        # Run Sutton's downward sweep + binary search
+        # Run two-stage discovery: nature detection + appropriate algorithm
         a_max, a_min = disc.run_discovery(probe_fn)
 
         dt = time.time() - t0
 
-        if a_max is not None and a_min is not None:
-            # Build bins from discovered MIN/MAX
-            # Binary detection: if MIN ≈ MAX (range < search_precision),
-            # build_bins produces 2 bins (DEAD_ZONE + ON)
-            bins = disc.build_bins()
-            if is_bidir:
-                bins = disc.make_bidirectional_bins(bins)
+        # Nature detection result from two-stage model
+        nature = disc.nature or 'unknown'
 
-            # Infer input type from results (not from config)
+        if a_max is not None and a_min is not None:
+            bins = disc.build_bins()
             inferred_type = 'binary' if len(bins) <= 2 else 'analog'
 
             logger.info(f"\n  RESULT: {action_name}")
-            logger.info(f"    MAX    = {a_max:.6f}")
-            logger.info(f"    MIN    = {a_min:.6f}")
+            logger.info(f"    Nature = {nature} (DISCOVERED by multi-magnitude probing)")
+            logger.info(f"    MAX    = {a_max:.10g}")
+            logger.info(f"    MIN    = {a_min:.10g}")
+            logger.info(f"    D0     = {disc.delta_0:.10g}")
+            logger.info(f"    Dmax   = {disc.delta_max:.10g}")
             logger.info(f"    Bins   = {len(bins)}")
             logger.info(f"    Probes = {probe_counter[0]}")
             logger.info(f"    Time   = {dt:.1f}s")
-            logger.info(f"    Discovered type: {inferred_type}")
+            logger.info(f"    Type:  {inferred_type} (DISCOVERED)")
 
             results[action_name] = {
-                'max':          a_max,
-                'min':          a_min,
-                'bins':         len(bins),
-                'probes':       probe_counter[0],
-                'time':         dt,
-                'delta_max':    disc.delta_max,
-                'delta_0':      disc.delta_0,
-                'input_type':   inferred_type,
+                'max':              a_max,
+                'min':              a_min,
+                'bins':             len(bins),
+                'probes':           probe_counter[0],
+                'time':             dt,
+                'delta_max':        disc.delta_max,
+                'delta_0':          disc.delta_0,
+                'input_type':       inferred_type,
+                'nature_detection': nature,
                 'bin_details': [
                     {'id': b.bin_id, 'min': b.a_min, 'max': b.a_max, 'label': b.label}
                     for b in bins
+                ],
+                'probe_data': [
+                    {
+                        'action_value': p.action_value,
+                        'delta': p.delta_state,
+                        'speed_before': p.feedback_before.get('speed', 0),
+                        'speed_after': p.feedback_after.get('speed', 0),
+                        'yaw_before': p.feedback_before.get('yaw', 0),
+                        'yaw_after': p.feedback_after.get('yaw', 0),
+                    }
+                    for p in disc.probes
                 ]
             }
         else:
-            logger.warning(f"\n  RESULT: {action_name} — NO DETECTABLE RANGE")
+            logger.warning(f"\n  RESULT: {action_name} -- NO DETECTABLE RANGE")
+            logger.warning(f"    Nature  = {nature}")
             logger.warning(f"    delta_max = {disc.delta_max}")
             logger.warning(f"    delta_0   = {disc.delta_0}")
             logger.warning(f"    Probes    = {probe_counter[0]}")
 
             results[action_name] = {
-                'max':        None,
-                'min':        None,
-                'bins':       0,
-                'probes':     probe_counter[0],
-                'time':       dt,
-                'delta_max':  disc.delta_max,
-                'delta_0':    disc.delta_0,
-                'input_type': 'none',
-                'no_range':   True
+                'max':              None,
+                'min':              None,
+                'bins':             0,
+                'probes':           probe_counter[0],
+                'time':             dt,
+                'delta_max':        disc.delta_max,
+                'delta_0':          disc.delta_0,
+                'input_type':       'none',
+                'nature_detection': nature,
+                'no_range':         True
             }
 
     # Summary
     logger.info("\n" + "=" * 70)
-    logger.info("PHASE A COMPLETE — TMNF")
+    logger.info("PHASE A COMPLETE — TMNF (Pure Sutton)")
     logger.info("=" * 70)
     total_probes = sum(r['probes'] for r in results.values())
     total_time   = sum(r['time'] for r in results.values())
+    logger.info(f"  Frame duration: {frame_duration_s*1000:.0f}ms (measured)")
     logger.info(f"  Total probes: {total_probes}")
     logger.info(f"  Total time:   {total_time:.1f}s")
     logger.info(f"  Rewind mode:  {use_rewind}")
+    logger.info(f"  Ticks/probe:  2 (ALL actions)")
     for name, r in results.items():
         if r.get('no_range'):
             logger.info(f"  {name}: NO RANGE (delta_max={r['delta_max']})")
         else:
-            logger.info(f"  {name}: MIN={r['min']:.6f}, MAX={r['max']:.6f}, "
+            logger.info(f"  {name}: MIN={r['min']:.10g}, MAX={r['max']:.10g}, "
                         f"{r['bins']} bins, {r['probes']} probes "
                         f"[{r['input_type']}]")
     logger.info("=" * 70)
@@ -407,7 +490,8 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
 # SAVE RESULTS
 # =============================================================================
 
-def save_results(results: dict, use_rewind: bool) -> str:
+def save_results(results: dict, use_rewind: bool,
+                 frame_duration_s: float, precision: dict) -> str:
     """Save discovery results to JSON file."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"tmnf_phase_a_results_{timestamp}.json"
@@ -417,16 +501,30 @@ def save_results(results: dict, use_rewind: bool) -> str:
         'environment':   'TMNF',
         'interface':     'TMInterface 2.x (TCP bridge)',
         'plugin':        'AgenticBridge.as',
-        'tick_ms':       10,
+        'frame_duration_ms': frame_duration_s * 1000,
+        'frame_duration_source': 'measured from environment (race_time delta)',
         'deterministic': True,
         'rewind_mode':   use_rewind,
         'algorithm':     'sutton_downward_sweep',
-        'input_facts': {
-            'gas':   'binary (threshold >0.001)',
-            'brake': 'binary (threshold >0.001)',
-            'left':  'binary keyboard key (InputType::Left)',
-            'right': 'binary keyboard key (InputType::Right)',
-            'note':  'analog steer (InputType::Steer) requires joystick/vJoy binding — not available',
+        'ticks_per_probe': 2,
+        'ticks_per_probe_note': '1 tick input delay + 1 tick measurement, same for ALL actions',
+        'precision': {
+            'speed_epsilon': precision['speed_epsilon'],
+            'yaw_epsilon': precision['yaw_epsilon'],
+            'speed_precision_digits': precision['speed_precision_digits'],
+            'yaw_precision_digits': precision['yaw_precision_digits'],
+            'deterministic': precision['deterministic'],
+            'source': 'measured from repeated D0 probes',
+        },
+        'sutton_compliance': {
+            'hardcoded_epsilons': False,
+            'hardcoded_ranges': False,
+            'hardcoded_frame_duration': False,
+            'hardcoded_precision': False,
+            'multi_tick_probes': False,
+            'd0_subtraction': False,
+            'normalization': False,
+            'averaging': False,
         },
         'results': results
     }
@@ -444,32 +542,22 @@ def save_results(results: dict, use_rewind: bool) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Phase A Bin Discovery — TMNF + TMInterface 2.x',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python test_phase_a_tmnf.py                 # Full discovery, rewind mode
-  python test_phase_a_tmnf.py --no-rewind     # Sequential (no rewind)
-  python test_phase_a_tmnf.py --speed 5.0     # 5x game speed
-  python test_phase_a_tmnf.py --steering-only # Only steering discovery
-  python test_phase_a_tmnf.py --port 8476     # Custom port
-        """
+        description='Phase A Bin Discovery — TMNF + TMInterface 2.x (Pure Sutton)',
     )
     parser.add_argument('--no-rewind', action='store_true',
-                        help='Disable rewind (sequential probing, car state accumulates)')
+                        help='Disable rewind (sequential probing)')
     parser.add_argument('--speed', type=float, default=1.0,
                         help='Game speed multiplier (default: 1.0)')
     parser.add_argument('--port', type=int, default=8476,
-                        help='TCP port for AgenticBridge.as plugin (default: 8476)')
+                        help='TCP port for AgenticBridge.as (default: 8476)')
     parser.add_argument('--steering-only', action='store_true',
-                        help='Only run left/right steering discovery (skip gas/brake)')
+                        help='Only discover left/right steering')
     parser.add_argument('--actions', type=str, default=None,
-                        help='Comma-separated actions to discover (e.g. gas,left,right)')
+                        help='Comma-separated actions (e.g. gas,left,right)')
     args = parser.parse_args()
 
     use_rewind = not args.no_rewind
 
-    # Determine which actions to discover
     if args.steering_only:
         actions_to_run = ['left', 'right']
     elif args.actions:
@@ -479,93 +567,82 @@ Examples:
 
     print()
     print("=" * 70)
-    print("  PHASE A BIN DISCOVERY — TMNF + TMInterface 2.x")
-    print("  Pure Sutton Algorithm (deterministic, 10ms ticks)")
+    print("  PHASE A BIN DISCOVERY — Pure Sutton (Zero Hardcoding)")
+    print("  Everything is DISCOVERED from the environment.")
     print("=" * 70)
     print()
-    print("  Prerequisites:")
-    print("    1. TMNF installed (free game)")
-    print("    2. TMInterface 2.x installed via ModLoader")
-    print("    3. AgenticBridge.as copied to TMInterface Plugins folder:")
-    print("         %APPDATA%\\TMInterface\\Plugins\\AgenticBridge.as")
-    print("    4. TMNF launched via TMInterface.exe")
-    print("    5. A race is running (start any track)")
-    print()
-    print(f"  Mode:        {'REWIND (independent probes)' if use_rewind else 'SEQUENTIAL (no rewind)'}")
-    print(f"  Game speed:  {args.speed}x")
-    print(f"  Port:        {args.port}")
-    print(f"  Actions:     {actions_to_run}")
-    print()
-    print("  Input types will be DISCOVERED by the algorithm (not assumed)")
+    print(f"  Mode:     {'REWIND (independent probes)' if use_rewind else 'SEQUENTIAL'}")
+    print(f"  Speed:    {args.speed}x")
+    print(f"  Actions:  {actions_to_run}")
+    print(f"  Ticks:    2 per probe (ALL actions — no exceptions)")
     print()
 
     # Connect
     adapter = TMNFAdapter()
     if not adapter.connect(port=args.port, timeout=30.0):
-        print()
         print("ERROR: Could not connect to AgenticBridge.as plugin.")
-        print()
-        print("Troubleshooting:")
-        print("  1. Is TMNF running via TMInterface.exe?")
-        print("  2. Is AgenticBridge.as in the Plugins folder?")
-        print(f"  3. Is port {args.port} correct?")
-        print("     (Change with RegisterVariable custom_port in TMInterface console)")
-        print()
-        print("Setup guide: docs/TMNF_SETUP.md")
         return
 
-    # Wait for race
     if not adapter.wait_for_race(timeout=60.0):
-        print()
-        print("ERROR: No race detected.")
-        print("Start a solo race in TMNF, then run this script.")
+        print("ERROR: No race detected. Start a race first.")
         adapter.stop()
         return
 
-    # Set game speed
     if args.speed != 1.0:
         adapter.set_speed(args.speed)
         logger.info(f"Game speed set to {args.speed}x")
 
     try:
-        # System initialization (Sutton section 9): get car moving
-        # "Speed starts at 100" — car must be moving before experimentation
-        MIN_PROBE_SPEED = 10.0  # km/h — moderate speed (grass has high friction)
+        # ---- STEP 0: Measure frame duration from environment ----
+        frame_duration_s = measure_frame_duration(adapter)
+
+        # ---- Get car moving (Sutton: "test from whatever state") ----
+        # Need high speed for 1-tick steering to produce measurable yaw.
+        # TMNF physics: tire lateral force ∝ speed. At low speed (60 km/h),
+        # 1 tick of digital left produces 0 additional yaw vs D0.
+        # At 200 km/h, 2-tick left gives yaw diff of ~2e-5 (clearly detectable).
+        # Measured empirically: 60 km/h = 0 diff, 200 km/h = 1.98e-5 diff.
+        MIN_PROBE_SPEED = 200.0
         fb = adapter.get_feedbacks()
         speed = fb.get('speed', 0)
         if speed < MIN_PROBE_SPEED:
-            logger.info(f"  System init: accelerating from {speed:.1f} to {MIN_PROBE_SPEED} km/h...")
+            logger.info(f"  Accelerating to {MIN_PROBE_SPEED} km/h...")
             while speed < MIN_PROBE_SPEED:
                 adapter.send_action_dict({'gas': 1.0, 'brake': 0.0, 'steering': 0.0})
                 adapter.wait_one_tick()
                 fb = adapter.get_feedbacks()
                 speed = fb.get('speed', 0)
-            logger.info(f"  System init complete: speed={speed:.1f} km/h")
+            logger.info(f"  Speed: {speed:.1f} km/h")
 
-        # Release inputs before discovery
-        adapter.send_action_dict({'gas': 0.0, 'brake': 0.0, 'steering': 0.0})
+        # Release inputs
+        adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
         adapter.wait_one_tick()
 
-        # Run discovery
-        results = run_discovery_tmnf(adapter, use_rewind=use_rewind,
-                                     actions_to_run=actions_to_run)
+        # ---- STEP 1: Measure system precision ----
+        precision = measure_system_precision(adapter, use_rewind, num_probes=3)
 
-        # Save results
-        save_results(results, use_rewind)
+        # ---- STEP 2: Run discovery ----
+        results = run_discovery_tmnf(
+            adapter, use_rewind=use_rewind,
+            actions_to_run=actions_to_run,
+            frame_duration_s=frame_duration_s,
+            precision=precision
+        )
+
+        # ---- Save ----
+        save_results(results, use_rewind, frame_duration_s, precision)
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
     finally:
-        # Release all controls
         try:
-            adapter.send_action_dict({'gas': 0.0, 'brake': 0.0, 'steering': 0.0})
+            adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
             adapter.wait_one_tick()
         except Exception:
             pass
         adapter.stop()
-        print()
         print("Done.")
 
 

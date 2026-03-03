@@ -188,57 +188,42 @@ class FrameBinDiscovery:
     def __init__(
         self,
         action_name: str,
-        action_range: Tuple[float, float],
-        search_precision: float = 0.001
+        search_precision: float = None,
+        measurement_epsilon: float = None
     ):
         """
         Initialize bin discovery for a single action.
 
+        Sutton: "bins needs to be figured out by the system. Not by us."
+        Sutton: "the precision is not us, precision is the system."
+
+        No hardcoded ranges, no hardcoded epsilons. Everything is either
+        discovered from the environment or passed in after measurement.
+
         Args:
             action_name: Name of the action (e.g., 'gas', 'brake', 'left')
-            action_range: (min, max) valid action values
-            search_precision: Binary search convergence threshold. This is NOT
-                the measurement precision -- it controls when binary search
-                stops narrowing the bracket: while (high - low) > search_precision.
-                Default 0.001 means binary search stops when the bracket is
-                narrower than 0.001 action units.
-
-        Note on measurement_epsilon (set externally):
-            measurement_epsilon controls delta comparison: two deltas are
-            "the same" if abs(d1 - d2) < epsilon. Currently hardcoded
-            per-action type (0.01 for gas/brake, 1e-5 for steering).
-            TODO: Implement precision discovery step -- probe D0 multiple
-            times, measure max deviation, set epsilon = 2 * max_deviation.
-            This would make precision truly discovered from the environment
-            rather than assumed (Sutton: "determined by the system").
-
-        Note on D0 (delta_0):
-            D0 is state-dependent, not random noise. It varies with the car's
-            speed, position, and surface because drag/friction forces differ.
-            Each action's discovery measures D0 from its own saved state.
-            D0 is a REAL transition (Sutton: "not doing an action is also
-            an action"), never subtracted from other deltas.
+            search_precision: Binary search convergence threshold.
+                MUST be discovered from the environment (repeated D0 probes).
+                If None, binary search uses a 50-step safety limit only.
+            measurement_epsilon: Delta comparison threshold.
+                MUST be discovered from the environment (D0 probe variance).
+                If None, uses bit-exact comparison (any difference is real).
         """
         self.action_name = action_name
-        self.action_range = action_range
         self.search_precision = search_precision
+        self.measurement_epsilon = measurement_epsilon
 
         # Core results
-        self.delta_0: Optional[float] = None      # Delta when action=0 (state-dependent, not noise)
+        self.delta_0: Optional[float] = None      # Delta when action=0 (real transition)
         self.delta_max: Optional[float] = None     # Saturated delta
         self.a_max: Optional[float] = None         # Discovered MAX
         self.a_min: Optional[float] = None         # Discovered MIN
         self.delta_at_min: Optional[float] = None  # Delta at MIN
+        self.nature: Optional[str] = None          # 'binary', 'analog', or 'none' (discovered)
 
         # Probe history
         self.probes: List[ProbeResult] = []
-        self.system_precision: int = 6
-
-        # Epsilon for delta comparison. Should be discovered empirically
-        # (TODO: precision discovery step), currently set externally per-action.
-        # Not a heuristic — physically grounded in measurement resolution.
-        # epsilon = 2 * min_observable_change = 2 * 10^(-decimal_places)
-        self.measurement_epsilon: Optional[float] = None
+        self.system_precision: int = 0  # Discovered from feedback
 
     # -----------------------------------------------------------------
     # DELTA COMPUTATION: SIGNED, not absolute
@@ -316,14 +301,18 @@ class FrameBinDiscovery:
     # -----------------------------------------------------------------
 
     def _deltas_are_same(self, d1: float, d2: float) -> bool:
-        """Are two deltas effectively the same?
+        """Are two deltas the same within discovered measurement precision?
 
-        Uses fixed epsilon that absorbs state variation between probes.
-        Must be large enough that noise doesn't look like signal,
-        small enough that real control differences are visible.
+        Sutton Jan 24: "the precision is not us, precision is the system."
+
+        If measurement_epsilon was discovered (from repeated D0 probes),
+        use it. If not discovered, use bit-exact comparison —
+        with deterministic rewind, any difference is real signal.
         """
-        eps = self.measurement_epsilon or 0.05
-        return abs(d1 - d2) < eps
+        if self.measurement_epsilon is not None and self.measurement_epsilon > 0:
+            return abs(d1 - d2) < self.measurement_epsilon
+        # No epsilon discovered → bit-exact comparison
+        return d1 == d2
 
     def _is_saturated(self, delta: float) -> bool:
         """Is this delta the same as the saturated (max) delta?
@@ -337,12 +326,11 @@ class FrameBinDiscovery:
     def _is_same_as_delta0(self, delta: float) -> bool:
         """Is this delta the same as D0 (action=0)?
 
-        discovery: action=0 is a real action. If delta == D0,
-        the tested action had no effect beyond what doing nothing does.
+        Sutton: "not doing an action is also an action."
+        If delta == D0, the tested action had no effect beyond coasting.
         """
         if self.delta_0 is None:
-            eps = self.measurement_epsilon or 0.05
-            return abs(delta) < eps
+            return delta == 0.0  # Before D0 is measured, assume 0
         return self._deltas_are_same(delta, self.delta_0)
 
     # -----------------------------------------------------------------
@@ -358,23 +346,261 @@ class FrameBinDiscovery:
     # -----------------------------------------------------------------
 
     def get_exponential_sequence(self) -> List[float]:
-        """Descending powers of 10 within the true action range.
+        """Descending powers of 10 from 1e6 down to 1e-6.
 
-        discovery's exponential bracketing: start from action_range max,
-        descend by powers of 10. No phantom values outside the range
-        that just get clamped to the same thing.
+        Sutton Jan 15: "you start with zero and then you go to like 0.1
+        0.01 0.001... it's a power of 10"
 
-        For [0, 1]: [1.0, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.000001]
+        Sutton Feb 16 (Pong example): "start at 100 for the pong"
+        Algorithm spec: "Start at large value (1e6)"
+
+        The sequence starts LARGE so the algorithm discovers the action
+        range rather than assuming it. No hardcoded ranges.
+
+        Returns: [1e6, 1e5, 1e4, 1e3, 100, 10, 1, 0.1, 0.01, ..., 1e-6]
         """
-        a_max = abs(self.action_range[1])
         values = []
-        val = a_max
-        while val >= 1e-6:
-            values.append(val)
-            val /= 10.0
-        if not values or values[-1] > 1e-6:
-            values.append(1e-6)
+        exp = 6   # Start at 10^6
+        while exp >= -6:
+            values.append(10.0 ** exp)
+            exp -= 1
         return values
+
+    # -----------------------------------------------------------------
+    # NATURE DETECTION: Binary vs Analog (two-stage model)
+    # -----------------------------------------------------------------
+
+    # Probe magnitudes for nature detection: span 3+ orders of magnitude
+    NATURE_PROBE_VALUES = [1e-6, 0.001, 1.0, 1000.0]
+
+    def detect_action_nature(
+        self,
+        probe_fn: Callable[[float], 'ProbeResult']
+    ) -> str:
+        """Detect whether action is BINARY or ANALOG before full sweep.
+
+        Sutton's algorithm assumes analog actions with a transition region.
+        For binary actions (like TMNF gas/brake/steering), there IS no
+        transition -- all values produce the same delta. This wastes the
+        full exponential sweep finding no brackets.
+
+        Detection method (from multi-speed binary proof):
+          1. Measure D0 = probe_fn(0.0)
+          2. Probe 4 values spanning 3+ orders of magnitude:
+             [1e-6, 0.001, 1.0, 1000.0]
+          3. Collect deltas, excluding any that equal D0 (dead zone probes)
+          4. If ALL non-D0 deltas are identical (within measurement_epsilon)
+             -> BINARY (no transition region exists)
+          5. If fewer than 2 non-D0 deltas found -> 'none' (no detectable effect)
+          6. If deltas differ -> ANALOG (proceed with Sutton's full sweep)
+
+        Side effects:
+          - Sets self.delta_0 from the D0 probe
+          - Sets self.delta_max from the first active probe
+          - Adds all probes to self.probes (counted toward total_experiments)
+          - Stores nature detection probes for potential reuse by analog path
+
+        Returns: 'binary', 'analog', or 'none'
+        """
+        logger.info(f"  [NATURE DETECTION] Probing {len(self.NATURE_PROBE_VALUES)} "
+                     f"orders of magnitude to detect binary vs analog...")
+
+        # Step 1: Measure D0
+        logger.info(f"  [STEP 1] Measure D0 = step(action=0)")
+        d0_probe = probe_fn(0.0)
+        if d0_probe.valid:
+            self.delta_0 = d0_probe.delta_state
+        else:
+            self.delta_0 = 0.0
+            logger.warning(f"    D0 probe invalid, using 0.0")
+        logger.info(f"    D0 = {self.delta_0:.6f}")
+        logger.info(f"    (Real transition, not noise)")
+
+        # Step 2: Probe across orders of magnitude
+        active_deltas = []  # Deltas that differ from D0
+        nature_probes = []  # (value, delta) pairs for all probes
+
+        for val in self.NATURE_PROBE_VALUES:
+            pr = probe_fn(val)
+            if not pr.valid:
+                logger.info(f"    nature probe a={val:.6g} -> INVALID (skipped)")
+                continue
+
+            delta = pr.delta_state
+            nature_probes.append((val, delta))
+            logger.info(f"    nature probe a={val:.6g} -> delta={delta:.10g}")
+
+            if not self._is_same_as_delta0(delta):
+                active_deltas.append(delta)
+                # First active probe sets delta_max (saturated reference)
+                if self.delta_max is None:
+                    self.delta_max = delta
+
+        # Step 3: Classify
+        if len(active_deltas) < 2:
+            # Fewer than 2 non-D0 deltas: action has no detectable effect
+            # or only one magnitude works
+            self.nature = 'none'
+            logger.info(f"  [NATURE] = NONE (only {len(active_deltas)} active probes)")
+            return 'none'
+
+        # Check if ALL active deltas are identical (within epsilon)
+        ref_delta = active_deltas[0]
+        all_same = all(self._deltas_are_same(d, ref_delta) for d in active_deltas[1:])
+
+        if all_same:
+            self.nature = 'binary'
+            self.delta_max = ref_delta
+            logger.info(f"  [NATURE] = BINARY")
+            logger.info(f"    All {len(active_deltas)} active probes produce identical "
+                         f"delta = {ref_delta:.10g}")
+            logger.info(f"    No transition region exists. Action is digital on/off.")
+        else:
+            self.nature = 'analog'
+            logger.info(f"  [NATURE] = ANALOG")
+            logger.info(f"    Deltas differ across magnitudes -> transition region exists.")
+            logger.info(f"    Proceeding with Sutton's full exponential sweep + binary search.")
+
+        return self.nature
+
+    def _run_binary_discovery(
+        self,
+        probe_fn: Callable[[float], 'ProbeResult']
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Binary action discovery: find meaningful MIN via binary search.
+
+        For binary actions, all values above some threshold produce the
+        same delta. There is no transition region, so Sutton's full
+        exponential sweep would waste probes finding nothing.
+
+        Instead:
+          1. MAX = 1.0 (the nominal full-scale value, validated by probing)
+          2. MIN = discovered via binary search between smallest active probe
+             and 0.0 (where delta transitions from D0 to active)
+          3. bins = 2 (dead zone + active)
+
+        The nature detection probes already confirmed binary behavior.
+        Now we just need to validate MAX and find true MIN.
+        """
+        logger.info(f"  [BINARY PATH] Finding meaningful boundaries...")
+
+        # Validate MAX = 1.0
+        # Binary actions: any value above threshold = same effect.
+        # 1.0 is the nominal full-scale value. Confirm it produces delta_max.
+        pr_max = probe_fn(1.0)
+        if pr_max.valid and self._deltas_are_same(pr_max.delta_state, self.delta_max):
+            self.a_max = 1.0
+            logger.info(f"    MAX = 1.0 (validated: delta={pr_max.delta_state:.10g} "
+                         f"matches delta_max={self.delta_max:.10g})")
+        else:
+            # Unexpected: 1.0 doesn't produce saturated delta.
+            # Fall back to the largest nature probe that was active.
+            for val in reversed(sorted(v for v, d in
+                    [(nv, nd) for nv, nd in
+                     [(p.action_value, p.delta_state) for p in self.probes
+                      if p.action_value > 0 and p.valid]]
+                    if not self._is_same_as_delta0(d))):
+                self.a_max = val
+                break
+            else:
+                self.a_max = 1.0  # Default if somehow no active probes
+            logger.warning(f"    MAX = {self.a_max} (1.0 did not match delta_max, "
+                           f"using largest active probe)")
+
+        # Find MIN via binary search
+        # We know from nature probes which values are active (differ from D0)
+        # and which are in the dead zone (same as D0).
+        # For TMNF binary inputs, the threshold is at the adapter level
+        # (any float > 0.0 activates the key), so MIN may be extremely small.
+
+        # Find the smallest nature probe value that was still active
+        smallest_active = None
+        for val in sorted(self.NATURE_PROBE_VALUES):
+            pr_check = None
+            for p in self.probes:
+                if p.action_value == val and p.valid:
+                    pr_check = p
+                    break
+            if pr_check and not self._is_same_as_delta0(pr_check.delta_state):
+                smallest_active = val
+                break
+
+        if smallest_active is None:
+            # All probes were dead zone somehow (shouldn't happen if nature='binary')
+            self.a_min = self.NATURE_PROBE_VALUES[0]
+            logger.warning(f"    MIN = {self.a_min} (no active probes found in nature detection)")
+        elif smallest_active == self.NATURE_PROBE_VALUES[0]:
+            # Even the smallest probe (1e-6) was active.
+            # The true MIN is below our tested range.
+            # Try even smaller values to find where delta transitions to D0.
+            logger.info(f"    Smallest nature probe ({smallest_active:.6g}) still active.")
+            logger.info(f"    Probing below {smallest_active:.6g} for true MIN...")
+
+            # Probe progressively smaller values
+            test_below = [smallest_active * 0.001, smallest_active * 1e-6, 0.0]
+            found_d0_at = None
+            last_active = smallest_active
+
+            for tv in test_below:
+                if tv <= 0.0:
+                    # Zero = D0 by definition
+                    found_d0_at = 0.0
+                    break
+                pr_tv = probe_fn(tv)
+                if pr_tv.valid:
+                    if self._is_same_as_delta0(pr_tv.delta_state):
+                        found_d0_at = tv
+                        logger.info(f"      a={tv:.6g} -> D0 (dead zone)")
+                        break
+                    else:
+                        last_active = tv
+                        logger.info(f"      a={tv:.6g} -> active (delta={pr_tv.delta_state:.10g})")
+
+            if found_d0_at is not None and found_d0_at < last_active:
+                # Binary search between found_d0_at and last_active
+                logger.info(f"    Binary search for MIN in [{found_d0_at:.6g}, {last_active:.6g}]")
+                self.a_min, bs_steps = self._binary_search_min(
+                    probe_fn, found_d0_at, last_active
+                )
+                logger.info(f"    >>> MIN = {self.a_min:.10g} ({bs_steps} binary search steps)")
+            else:
+                # Even 1e-12 is still active -- MIN is at the adapter boundary
+                self.a_min = last_active
+                logger.info(f"    MIN = {self.a_min:.6g} (smallest tested value still active)")
+                logger.info(f"    True threshold likely at adapter level (any float > 0.0)")
+        else:
+            # There's a dead zone probe below smallest_active
+            # Find the largest dead zone probe
+            largest_dead = 0.0
+            for val in sorted(self.NATURE_PROBE_VALUES):
+                if val >= smallest_active:
+                    break
+                pr_check = None
+                for p in self.probes:
+                    if p.action_value == val and p.valid:
+                        pr_check = p
+                        break
+                if pr_check and self._is_same_as_delta0(pr_check.delta_state):
+                    largest_dead = val
+
+            logger.info(f"    Binary search for MIN in [{largest_dead:.6g}, {smallest_active:.6g}]")
+            self.a_min, bs_steps = self._binary_search_min(
+                probe_fn, largest_dead, smallest_active
+            )
+            logger.info(f"    >>> MIN = {self.a_min:.10g} ({bs_steps} binary search steps)")
+
+        # Record delta_at_min
+        pr_min = probe_fn(self.a_min)
+        self.delta_at_min = pr_min.delta_state if pr_min.valid else self.delta_max
+
+        logger.info(f"  [BINARY PATH COMPLETE]")
+        logger.info(f"    MAX = {self.a_max}")
+        logger.info(f"    MIN = {self.a_min:.10g}")
+        logger.info(f"    delta_max = {self.delta_max:.10g}")
+        logger.info(f"    delta_at_min = {self.delta_at_min:.10g}")
+        logger.info(f"    bins = 2 (dead zone + active)")
+
+        return self.a_max, self.a_min
 
     # -----------------------------------------------------------------
     # STEPS 2-5: FULL DISCOVERY
@@ -385,51 +611,64 @@ class FrameBinDiscovery:
         probe_fn: Callable[[float], ProbeResult]
     ) -> Tuple[Optional[float], Optional[float]]:
         """
-        discovery's EXACT 6-step algorithm (experimentation_algorithm.md):
+        Two-stage discovery: detect action nature, then apply appropriate algorithm.
 
-            1. Measure D0 = step(action=0)
-            2. Find bracket for MAX:
-                    large value -> saturated?
-                    shrink until bracket found
-            3. Binary search bracket
-                    until precision reached
-            4. Find bracket for MIN:
-                    find first value == D0
+        Stage 1: Nature Detection (detect_action_nature)
+            Probe 4 values spanning 3+ orders of magnitude.
+            If ALL non-D0 deltas identical -> BINARY
+            If deltas differ -> ANALOG
+
+        Stage 2A: Binary path (_run_binary_discovery)
+            MAX = 1.0 (validated), MIN via binary search. ~6-8 probes total.
+
+        Stage 2B: Analog path (Sutton's full algorithm)
+            1. Measure D0 = step(action=0)  [already done in Stage 1]
+            2. Find bracket for MAX: large value -> saturated? shrink until bracket found
+            3. Binary search bracket until precision reached
+            4. Find bracket for MIN: find first value == D0
             5. Binary search for boundary
             6. Store: MIN, MAX, D per frame
 
         No heuristics. No baseline subtraction. No magic decimals.
         Pure transition search.
 
-        discovery: "Not doing an action is also an action."
+        Sutton: "Not doing an action is also an action."
         D0 is a REAL transition, not noise to be subtracted.
+
+        The nature detection probes count toward total experiments.
+        Binary detection is DISCOVERED, not hardcoded.
 
         Returns:
             (a_max, a_min) or (None, None) if action has no effect.
         """
-        sequence = self.get_exponential_sequence()
+        # ===========================================
+        # STAGE 1: Detect action nature (binary vs analog)
+        # ===========================================
+        nature = self.detect_action_nature(probe_fn)
+
+        if nature == 'none':
+            logger.warning(f"  Action has no detectable effect.")
+            return None, None
+
+        if nature == 'binary':
+            return self._run_binary_discovery(probe_fn)
 
         # ===========================================
-        # STEP 1: Measure D0 = step(action=0)
-        # discovery: "Send 0 -> speed = 98  D=-2 (coasting drag)"
-        # "Not doing an action is also an action"
+        # STAGE 2B: ANALOG PATH -- Sutton's full algorithm
+        # D0 already measured by detect_action_nature.
+        # For the analog path, we reset delta_max so the exponential
+        # sweep re-establishes it from the LARGEST probe value (1e6),
+        # which is the true saturated delta for analog actions.
         # ===========================================
-        logger.info(f"  [STEP 1] Measure D0 = step(action=0)")
-        d0_probe = probe_fn(0.0)
-        if d0_probe.valid:
-            self.delta_0 = d0_probe.delta_state
-        else:
-            self.delta_0 = 0.0
-            logger.warning(f"    D0 probe invalid, using 0.0")
-        logger.info(f"    D0 = {self.delta_0:.6f}")
-        logger.info(f"    (Real transition, not noise — discovery)")
+        sequence = self.get_exponential_sequence()
+        self.delta_max = None  # Reset so exponential sweep re-discovers from largest value
 
         # ===========================================
         # STEP 2: Exponential bracketing for MAX
-        # discovery: "large value -> saturated? shrink until bracket found"
+        # Sutton: "large value -> saturated? shrink until bracket found"
         # Then continue descent for MIN: "find first value == D0"
         # ===========================================
-        logger.info(f"  [STEP 2] Exponential bracketing...")
+        logger.info(f"  [STEP 2] Exponential bracketing (analog path)...")
 
         max_bracket_low = None
         max_bracket_high = None
@@ -451,7 +690,7 @@ class FrameBinDiscovery:
             delta = pr.delta_state
             logger.info(f"    a={val:.6f} -> delta={delta:.6f}")
 
-            # First probe = saturated delta (highest action value)
+            # First valid probe = saturated delta (highest action value)
             if self.delta_max is None:
                 self.delta_max = delta
                 logger.info(f"    (saturated delta = {delta:.6f})")
@@ -507,14 +746,28 @@ class FrameBinDiscovery:
                           f"({self.delta_0:.6f}). Action has no detectable effect.")
             return None, None
 
-        # Edge case: never found MAX bracket (all saturated = no range)
+        # Edge case: never found MAX bracket (all probes saturated)
+        # This means the action is BINARY: any positive value produces
+        # the same saturated delta. MAX = first tested value (largest).
         if not found_max_bracket:
-            self.a_max = self.action_range[1]
-            logger.info(f"  All probes saturated. MAX = {self.a_max}")
+            self.a_max = sequence[0]  # Largest value tested
+            logger.info(f"  All probes saturated → BINARY action. MAX = {self.a_max}")
+
+            # If also no MIN bracket, every tested value had effect.
+            # This happens with digital inputs (any value > 0.0 = ON).
+            # Set MIN = smallest tested value. Binary detection in build_bins()
+            # will see delta_at_min == delta_max (same effect for all values).
+            if not found_min_bracket:
+                self.a_min = sequence[-1]
+                self.delta_at_min = self.delta_max  # All values produce same delta
+                logger.info(f"  BINARY: no brackets found but delta_max != D0.")
+                logger.info(f"  MIN = {self.a_min} (smallest tested, still had effect)")
+                logger.info(f"  MAX = {self.a_max}, delta_at_min = delta_max = {self.delta_max:.6f}")
+                return self.a_max, self.a_min
 
         # ===========================================
         # STEP 3: Binary search for MAX
-        # discovery: "Binary search bracket until precision reached"
+        # Sutton: "Binary search bracket until precision reached"
         # ===========================================
         if found_max_bracket:
             logger.info(
@@ -525,8 +778,6 @@ class FrameBinDiscovery:
                 probe_fn, max_bracket_low, max_bracket_high
             )
             logger.info(f"    >>> MAX = {self.a_max:.6f} ({bs_steps} binary search steps)")
-        else:
-            self.a_max = self.action_range[1]
 
         # ===========================================
         # STEP 4-5: Binary search for MIN
@@ -554,7 +805,8 @@ class FrameBinDiscovery:
                     f"Using smallest test value: {self.a_min:.6f}"
                 )
             else:
-                # No MAX bracket either → no detectable range
+                # All probes saturated AND delta_max == D0
+                # (handled above, but safety fallback)
                 return None, None
 
         # D0 already measured in Step 1 — stored in self.delta_0
@@ -584,20 +836,23 @@ class FrameBinDiscovery:
             MAX = 17
         """
         steps = 0
-        while (high - low) > self.search_precision:
+        max_steps = 50  # Safety limit
+        while steps < max_steps:
+            # Stop condition: bracket narrower than discovered precision
+            if self.search_precision is not None and (high - low) <= self.search_precision:
+                break
             mid = (low + high) / 2.0
+            if mid == low or mid == high:
+                break  # Float precision exhausted
             pr = probe_fn(mid)
             steps += 1
 
             if self._is_saturated(pr.delta_state):
                 high = mid  # Still saturated, MAX might be lower
-                logger.info(f"    [{low:.6f}, {high:.6f}] mid={mid:.6f} -> SATURATED")
+                logger.info(f"    [{low:.10g}, {high:.10g}] mid={mid:.10g} -> SATURATED")
             else:
                 low = mid   # Not saturated, MAX is higher
-                logger.info(f"    [{low:.6f}, {high:.6f}] mid={mid:.6f} -> not saturated")
-
-            if steps > 50:  # Safety limit
-                break
+                logger.info(f"    [{low:.10g}, {high:.10g}] mid={mid:.10g} -> not saturated")
 
         return high, steps  # MAX = smallest saturated value
 
@@ -616,26 +871,29 @@ class FrameBinDiscovery:
         Invariant: delta(low) is SAME AS D0, delta(high) is DIFFERENT from D0.
         MIN = smallest action that produces delta != D0.
 
-        discovery example:
+        Sutton Feb 16 example:
             [1, 10] -> mid=5(same) -> [5,10] -> mid=7(diff) -> [5,7]
             -> mid=6(diff) -> [5,6] -> STOP
             MIN = 6
         """
         steps = 0
-        while (high - low) > self.search_precision:
+        max_steps = 50  # Safety limit
+        while steps < max_steps:
+            # Stop condition: bracket narrower than discovered precision
+            if self.search_precision is not None and (high - low) <= self.search_precision:
+                break
             mid = (low + high) / 2.0
+            if mid == low or mid == high:
+                break  # Float precision exhausted
             pr = probe_fn(mid)
             steps += 1
 
             if self._is_same_as_delta0(pr.delta_state):
                 low = mid   # No effect at mid, MIN is higher
-                logger.info(f"    [{low:.6f}, {high:.6f}] mid={mid:.6f} -> same as D0")
+                logger.info(f"    [{low:.10g}, {high:.10g}] mid={mid:.10g} -> same as D0")
             else:
                 high = mid  # Has effect at mid, MIN is lower or equal
-                logger.info(f"    [{low:.6f}, {high:.6f}] mid={mid:.6f} -> different from D0")
-
-            if steps > 50:  # Safety limit
-                break
+                logger.info(f"    [{low:.10g}, {high:.10g}] mid={mid:.10g} -> different from D0")
 
         return high, steps  # MIN = smallest value with effect
 
@@ -655,21 +913,23 @@ class FrameBinDiscovery:
         search higher. If different → has effect at mid, search lower.
         """
         steps = 0
-        while (high - low) > self.search_precision:
+        max_steps = 50
+        while steps < max_steps:
+            if self.search_precision is not None and (high - low) <= self.search_precision:
+                break
             mid = (low + high) / 2.0
+            if mid == low or mid == high:
+                break
             pr_mid = probe_fn(mid)
             pr_half = probe_fn(mid * 0.5)
             steps += 2
 
             if self._deltas_are_same(pr_mid.delta_state, pr_half.delta_state):
-                low = mid   # No difference → both in dead zone, MIN is higher
-                logger.info(f"    [{low:.6f}, {high:.6f}] mid={mid:.6f} -> same (dead zone)")
+                low = mid
+                logger.info(f"    [{low:.10g}, {high:.10g}] mid={mid:.10g} -> same (dead zone)")
             else:
-                high = mid  # Different → mid still has effect, MIN is lower
-                logger.info(f"    [{low:.6f}, {high:.6f}] mid={mid:.6f} -> different (has effect)")
-
-            if steps > 50:
-                break
+                high = mid
+                logger.info(f"    [{low:.10g}, {high:.10g}] mid={mid:.10g} -> different (has effect)")
 
         return high, steps
 
@@ -707,7 +967,6 @@ class FrameBinDiscovery:
             self.bin_boundaries = []
             return
 
-        eps = self.measurement_epsilon or 0.05
         boundaries: List[float] = []
 
         logger.info(f"  [BIN BOUNDARIES] Searching transitions in {len(valid_probes)} search probes...")
@@ -717,11 +976,10 @@ class FrameBinDiscovery:
             p1 = valid_probes[i]
             p2 = valid_probes[i + 1]
 
-            if abs(p1.delta_state - p2.delta_state) >= eps:
-                # Delta transition between these two actions — binary search it
+            if not self._deltas_are_same(p1.delta_state, p2.delta_state):
                 boundary = self._binary_search_transition(
                     probe_fn, abs(p1.action_value), abs(p2.action_value),
-                    p1.delta_state, eps, max_depth
+                    p1.delta_state, max_depth
                 )
                 if boundary is not None:
                     boundaries.append(boundary)
@@ -735,21 +993,23 @@ class FrameBinDiscovery:
         self,
         probe_fn: Callable[[float], ProbeResult],
         low: float, high: float,
-        delta_low: float, eps: float,
+        delta_low: float,
         max_steps: int
     ) -> Optional[float]:
         """Binary search for where delta transitions between low and high."""
         for _ in range(max_steps):
-            if (high - low) < self.search_precision:
+            if self.search_precision is not None and (high - low) < self.search_precision:
                 break
             mid = (low + high) / 2.0
+            if mid == low or mid == high:
+                break
             pr = probe_fn(mid)
             if not pr.valid:
-                break  # Can't measure here
-            if abs(pr.delta_state - delta_low) < eps:
-                low = mid  # Same delta as low side
+                break
+            if self._deltas_are_same(pr.delta_state, delta_low):
+                low = mid
             else:
-                high = mid  # Different delta — boundary is below
+                high = mid
         return high
 
     # -----------------------------------------------------------------
@@ -771,7 +1031,7 @@ class FrameBinDiscovery:
             BIN 1..N: uniform [MIN, MAX] — active range
         """
         a_min = self.a_min or 0.01
-        a_max = self.a_max or self.action_range[1]
+        a_max = self.a_max or 1.0
         n = num_bins or self.DEFAULT_NUM_BINS
 
         bins: List[ActionBin] = []
@@ -783,15 +1043,18 @@ class FrameBinDiscovery:
         ))
 
         # Binary detection:
+        # With the two-stage model, binary actions are detected in
+        # detect_action_nature() BEFORE the full sweep, giving meaningful
+        # MIN/MAX (not 1e6/1e-6). This check remains as a safety net.
         # 1. MIN == MAX (trivially binary)
         # 2. Range < search_precision (threshold is narrower than precision)
-        # 3. delta_at_min == D0 (MIN is dead zone edge — no intermediate levels
-        #    between dead zone and full-on; the entire active range is one step)
+        # 3. delta_at_min == delta_max (all action values produce same effect —
+        #    digital input like TMNF keyboard keys, any positive = ON)
         is_binary = (
             a_min >= a_max or
-            (a_max - a_min) < self.search_precision or
-            (self.delta_at_min is not None and self.delta_0 is not None and
-             abs(self.delta_at_min - self.delta_0) < (self.measurement_epsilon or 0.05))
+            (self.search_precision is not None and (a_max - a_min) < self.search_precision) or
+            (self.delta_at_min is not None and self.delta_max is not None and
+             self._deltas_are_same(self.delta_at_min, self.delta_max))
         )
         if is_binary:
             bins.append(ActionBin(
@@ -873,13 +1136,13 @@ class FrameBinDiscovery:
     # -----------------------------------------------------------------
 
     def clamp_action(self, value: float) -> float:
-        """Clamp action to [min_effective, max_effective] per frame.
+        """Clamp action to discovered [0, MAX] per frame.
 
-        discovery: "the max per frame is still the same... even if you want
+        Sutton: "the max per frame is still the same... even if you want
         in one frame you cannot"
         """
-        a_max = self.a_max or self.action_range[1]
-        return max(self.action_range[0], min(value, a_max))
+        a_max = self.a_max or 1.0
+        return max(0.0, min(value, a_max))
 
 
 # =============================================================================
@@ -933,13 +1196,10 @@ class ExperimentationIntelligence:
             if action_name not in self.actions_config:
                 continue
 
-            config = self.actions_config[action_name]
-            is_bidir = config['range'][0] < 0
             a_min = values['min']
             a_max = values['max']
 
-            disc = FrameBinDiscovery(action_name, tuple(config['range']),
-                                     self.search_precision)
+            disc = FrameBinDiscovery(action_name)
             disc.a_min = a_min
             disc.a_max = a_max
             disc.delta_max = a_max
@@ -968,17 +1228,6 @@ class ExperimentationIntelligence:
 
     MAX_PROBE_RETRIES = 3          # Retries on invalid steering probe
 
-    # Per-action epsilon: tolerance for "same delta" comparison.
-    # Higher epsilon = more tolerant of physics noise, fewer bins but more stable.
-    # Lower epsilon = more sensitive, more bins but may see noise as signal.
-    # No normalization → deltas vary with speed → need generous epsilon.
-    ACTION_EPSILON = {
-        'gas':      0.15,
-        'brake':    0.15,
-        'steering': 0.0001,
-    }
-    DEFAULT_EPSILON = 0.15
-
     def run_discovery_for_action(
         self,
         action_name: str,
@@ -1003,19 +1252,15 @@ class ExperimentationIntelligence:
         Pure: STATE_t --(ACTION per frame)--> STATE_t+1
         """
         config = self.actions_config[action_name]
-        action_range = (config['range'][0], config['range'][1])
-        is_bidir = config['range'][0] < 0
 
-        disc = FrameBinDiscovery(action_name, action_range, self.search_precision)
+        disc = FrameBinDiscovery(action_name)
         result = ActionDiscoveryResult(action_name=action_name)
         t0 = time.time()
-
-        action_epsilon = self.ACTION_EPSILON.get(action_name, self.DEFAULT_EPSILON)
 
         def make_action(value: float) -> Dict[str, float]:
             """Build action dict with only test action non-zero."""
             a = {name: 0.0 for name in self.actions_config}
-            a[action_name] = max(action_range[0], min(value, action_range[1]))
+            a[action_name] = value  # No clamping — let the environment reject
             return a
 
         def probe_one_frame(value: float) -> ProbeResult:
@@ -1042,8 +1287,7 @@ class ExperimentationIntelligence:
                     wait_fn(frame_duration_s)
 
                 fb_before = get_feedbacks_fn()
-                clamped = max(action_range[0], min(value, action_range[1]))
-                send_action_fn(make_action(clamped))
+                send_action_fn(make_action(value))
                 wait_fn(frame_duration_s)  # Exactly one frame
                 fb_after = get_feedbacks_fn()
 
