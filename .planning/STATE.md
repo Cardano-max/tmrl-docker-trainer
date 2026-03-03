@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-03 - Completed quick task 8: Multi-speed binary proof + extended range + analog gas fact-check
+Last activity: 2026-03-03 - Completed quick task 9: Full Sutton transcript audit + two-stage binary/analog discovery
 
 Progress: [██████░░░░] 58%
 
@@ -143,6 +143,10 @@ Recent decisions affecting current work:
 - [03-03]: MultiplicityTester uses ActionBin dataclass objects (intelligence layer), not dicts
 - [03-03]: Auto-tolerance computed as half the minimum gap between distinct bin deltas
 - [03-03]: Binary probe strategy: below/around/above threshold, plus linspace in dead zone
+- [quick-9]: Two-stage discovery: detect_action_nature() probes [1e-6, 0.001, 1.0, 1000.0] before choosing binary or analog path
+- [quick-9]: Binary MAX validated at 1.0 (nominal full-scale), not hardcoded; binary MIN found via binary search
+- [quick-9]: Analog path resets delta_max=None so exponential sweep re-discovers from largest probe (no contamination from nature probes)
+- [quick-9]: D0 measurement as explicit first step is OUR inference, not Sutton (documented honestly in TRANSCRIPT_AUDIT.md)
 
 ### Pending Todos
 
@@ -159,9 +163,10 @@ None.
 | 5 | Sutton compliance audit documentation + code fixes for frame duration, tick measurement, rewind, exponential sequence, precision, steering ticks, D0 explanation, and adapter threshold | 2026-03-01 | a2d72fd | [5-sutton-compliance-audit-documentation-co](./quick/5-sutton-compliance-audit-documentation-co/) |
 | 6 | Analyze MIN/MAX discovery results against Sutton spec + create 7-sheet probe-level Excel report from 5 normal-speed runs | 2026-03-03 | — | [6-analyze-min-max-discovery-results-agains](./quick/6-analyze-min-max-discovery-results-agains/) |
 | 8 | Multi-speed binary proof + extended range MIN probing + analog gas axis fact-check | 2026-03-03 | 876958e | [8-multi-speed-binary-proof-fact-check-vali](./quick/8-multi-speed-binary-proof-fact-check-vali/) |
+| 9 | Full Sutton transcript audit (25/25 REQs) + two-stage binary/analog discovery model | 2026-03-03 | f239131 | [9-full-sutton-meeting-transcript-audit-imp](./quick/9-full-sutton-meeting-transcript-audit-imp/) |
 
 ## Session Continuity
 
 Last session: 2026-03-03
-Stopped at: Completed quick-8 (Multi-speed binary proof) -- Phase 3 complete, Phase 4 next
+Stopped at: Completed quick-9 (Full Sutton transcript audit + two-stage discovery) -- Phase 3 complete, Phase 4 next
 Resume file: None
