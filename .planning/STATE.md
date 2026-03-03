@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-03 - Completed quick task 9: Full Sutton transcript audit + two-stage binary/analog discovery
+Last activity: 2026-03-03 - Completed quick task 10: 5-run two-stage validation script (awaiting live test)
 
 Progress: [██████░░░░] 58%
 
@@ -147,6 +147,9 @@ Recent decisions affecting current work:
 - [quick-9]: Binary MAX validated at 1.0 (nominal full-scale), not hardcoded; binary MIN found via binary search
 - [quick-9]: Analog path resets delta_max=None so exponential sweep re-discovers from largest probe (no contamination from nature probes)
 - [quick-9]: D0 measurement as explicit first step is OUR inference, not Sutton (documented honestly in TRANSCRIPT_AUDIT.md)
+- [quick-10]: Reuse all discovery functions from test_phase_a_tmnf.py (no code duplication in validation script)
+- [quick-10]: No Excel/openpyxl dependency -- JSON + terminal report only
+- [quick-10]: Cross-reference with multi_speed_binary_proof is optional (--no-cross-ref flag)
 
 ### Pending Todos
 
@@ -164,9 +167,10 @@ None.
 | 6 | Analyze MIN/MAX discovery results against Sutton spec + create 7-sheet probe-level Excel report from 5 normal-speed runs | 2026-03-03 | — | [6-analyze-min-max-discovery-results-agains](./quick/6-analyze-min-max-discovery-results-agains/) |
 | 8 | Multi-speed binary proof + extended range MIN probing + analog gas axis fact-check | 2026-03-03 | 876958e | [8-multi-speed-binary-proof-fact-check-vali](./quick/8-multi-speed-binary-proof-fact-check-vali/) |
 | 9 | Full Sutton transcript audit (25/25 REQs) + two-stage binary/analog discovery model | 2026-03-03 | f239131 | [9-full-sutton-meeting-transcript-audit-imp](./quick/9-full-sutton-meeting-transcript-audit-imp/) |
+| 10 | 5-run two-stage validation script (awaiting live TMNF test) | 2026-03-03 | 77d9ef4 | [10-run-5-live-discovery-runs-with-two-stage](./quick/10-run-5-live-discovery-runs-with-two-stage/) |
 
 ## Session Continuity
 
 Last session: 2026-03-03
-Stopped at: Completed quick-9 (Full Sutton transcript audit + two-stage discovery) -- Phase 3 complete, Phase 4 next
+Stopped at: Completed quick-10 Task 1 (script created). Task 2 (checkpoint:human-verify) awaits live TMNF test.
 Resume file: None
