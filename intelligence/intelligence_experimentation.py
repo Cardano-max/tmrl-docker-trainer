@@ -370,24 +370,25 @@ class FrameBinDiscovery:
     # NATURE DETECTION: Binary vs Analog (two-stage model)
     # -----------------------------------------------------------------
 
-    # Probe magnitudes for nature detection: span 3+ orders of magnitude
+    # Legacy fallback — prefer wire_precision-derived probes
     NATURE_PROBE_VALUES = [1e-6, 0.001, 1.0, 1000.0]
 
     def detect_action_nature(
         self,
-        probe_fn: Callable[[float], 'ProbeResult']
+        probe_fn: Callable[[float], 'ProbeResult'],
+        wire_precision: dict = None
     ) -> str:
         """Detect whether action is BINARY or ANALOG before full sweep.
 
-        Sutton's algorithm assumes analog actions with a transition region.
-        For binary actions (like TMNF gas/brake/steering), there IS no
-        transition -- all values produce the same delta. This wastes the
-        full exponential sweep finding no brackets.
+        Probes are DERIVED from wire precision when available
+        (Sutton: "first find the system's precision").
+        When wire_precision is provided, probes span from float_max down to
+        float_step in powers of 10. When not provided, falls back to
+        hardcoded NATURE_PROBE_VALUES for backward compatibility.
 
         Detection method (from multi-speed binary proof):
           1. Measure D0 = probe_fn(0.0)
-          2. Probe 4 values spanning 3+ orders of magnitude:
-             [1e-6, 0.001, 1.0, 1000.0]
+          2. Probe values spanning multiple orders of magnitude
           3. Collect deltas, excluding any that equal D0 (dead zone probes)
           4. If ALL non-D0 deltas are identical (within measurement_epsilon)
              -> BINARY (no transition region exists)
@@ -398,12 +399,31 @@ class FrameBinDiscovery:
           - Sets self.delta_0 from the D0 probe
           - Sets self.delta_max from the first active probe
           - Adds all probes to self.probes (counted toward total_experiments)
-          - Stores nature detection probes for potential reuse by analog path
+          - Stores derived probes as self._nature_probes for reuse
 
         Returns: 'binary', 'analog', or 'none'
         """
-        logger.info(f"  [NATURE DETECTION] Probing {len(self.NATURE_PROBE_VALUES)} "
-                     f"orders of magnitude to detect binary vs analog...")
+        # Derive probes from wire precision (Sutton: "first find the system's precision")
+        if wire_precision:
+            float_max = wire_precision['float_max']
+            float_step = wire_precision['float_step']
+            probes = []
+            val = float_max
+            while val >= float_step:
+                probes.append(val)
+                val /= 10.0
+            probes.append(float_step)  # smallest wire can represent
+            # Deduplicate and sort descending
+            probes = sorted(set(probes), reverse=True)
+        else:
+            probes = list(self.NATURE_PROBE_VALUES)  # fallback
+
+        # Store for reuse by _run_binary_discovery and analog path
+        self._nature_probes = probes
+
+        logger.info(f"  [NATURE DETECTION] Probing {len(probes)} "
+                     f"values to detect binary vs analog..."
+                     + (f" (derived from wire precision)" if wire_precision else ""))
 
         # Step 1: Measure D0
         logger.info(f"  [STEP 1] Measure D0 = step(action=0)")
@@ -420,7 +440,7 @@ class FrameBinDiscovery:
         active_deltas = []  # Deltas that differ from D0
         nature_probes = []  # (value, delta) pairs for all probes
 
-        for val in self.NATURE_PROBE_VALUES:
+        for val in probes:
             pr = probe_fn(val)
             if not pr.valid:
                 logger.info(f"    nature probe a={val:.6g} -> INVALID (skipped)")
@@ -465,7 +485,8 @@ class FrameBinDiscovery:
 
     def _run_binary_discovery(
         self,
-        probe_fn: Callable[[float], 'ProbeResult']
+        probe_fn: Callable[[float], 'ProbeResult'],
+        wire_precision: dict = None
     ) -> Tuple[Optional[float], Optional[float]]:
         """Binary action discovery: find meaningful MIN via binary search.
 
@@ -479,10 +500,23 @@ class FrameBinDiscovery:
              and 0.0 (where delta transitions from D0 to active)
           3. bins = 2 (dead zone + active)
 
+        When wire_precision is provided, the MIN binary search stops at the
+        wire step boundary (e.g., 1/255 for uint8) instead of grinding down
+        to floating-point epsilon.
+
         The nature detection probes already confirmed binary behavior.
         Now we just need to validate MAX and find true MIN.
         """
         logger.info(f"  [BINARY PATH] Finding meaningful boundaries...")
+
+        # Wire step floor: stop binary search at wire resolution limit
+        wire_step = wire_precision['float_step'] if wire_precision else None
+        saved_search_precision = self.search_precision
+        if wire_step is not None:
+            effective_precision = max(self.search_precision or 0, wire_step)
+            self.search_precision = effective_precision
+            logger.info(f"    Wire step floor: {wire_step:.6g} "
+                        f"(search_precision set to {effective_precision:.6g})")
 
         # Validate MAX = 1.0
         # Binary actions: any value above threshold = same effect.
@@ -514,8 +548,10 @@ class FrameBinDiscovery:
         # (any float > 0.0 activates the key), so MIN may be extremely small.
 
         # Find the smallest nature probe value that was still active
+        # Use self._nature_probes (derived from wire precision when available)
+        nature_probes = getattr(self, '_nature_probes', self.NATURE_PROBE_VALUES)
         smallest_active = None
-        for val in sorted(self.NATURE_PROBE_VALUES):
+        for val in sorted(nature_probes):
             pr_check = None
             for p in self.probes:
                 if p.action_value == val and p.valid:
@@ -527,9 +563,9 @@ class FrameBinDiscovery:
 
         if smallest_active is None:
             # All probes were dead zone somehow (shouldn't happen if nature='binary')
-            self.a_min = self.NATURE_PROBE_VALUES[0]
+            self.a_min = nature_probes[0] if nature_probes else 1e-6
             logger.warning(f"    MIN = {self.a_min} (no active probes found in nature detection)")
-        elif smallest_active == self.NATURE_PROBE_VALUES[0]:
+        elif smallest_active == sorted(nature_probes)[0]:
             # Even the smallest probe (1e-6) was active.
             # The true MIN is below our tested range.
             # Try even smaller values to find where delta transitions to D0.
@@ -572,7 +608,7 @@ class FrameBinDiscovery:
             # There's a dead zone probe below smallest_active
             # Find the largest dead zone probe
             largest_dead = 0.0
-            for val in sorted(self.NATURE_PROBE_VALUES):
+            for val in sorted(nature_probes):
                 if val >= smallest_active:
                     break
                 pr_check = None
@@ -593,6 +629,9 @@ class FrameBinDiscovery:
         pr_min = probe_fn(self.a_min)
         self.delta_at_min = pr_min.delta_state if pr_min.valid else self.delta_max
 
+        # Restore original search_precision (may have been overridden by wire_step)
+        self.search_precision = saved_search_precision
+
         logger.info(f"  [BINARY PATH COMPLETE]")
         logger.info(f"    MAX = {self.a_max}")
         logger.info(f"    MIN = {self.a_min:.10g}")
@@ -608,13 +647,18 @@ class FrameBinDiscovery:
 
     def run_discovery(
         self,
-        probe_fn: Callable[[float], ProbeResult]
+        probe_fn: Callable[[float], ProbeResult],
+        wire_precision: dict = None
     ) -> Tuple[Optional[float], Optional[float]]:
         """
         Two-stage discovery: detect action nature, then apply appropriate algorithm.
 
+        When wire_precision is provided (Sutton: "first find the system's precision"),
+        probe values are DERIVED from the wire format instead of using hardcoded
+        NATURE_PROBE_VALUES, and MIN search stops at the wire step boundary.
+
         Stage 1: Nature Detection (detect_action_nature)
-            Probe 4 values spanning 3+ orders of magnitude.
+            Probe values spanning multiple orders of magnitude.
             If ALL non-D0 deltas identical -> BINARY
             If deltas differ -> ANALOG
 
@@ -638,20 +682,26 @@ class FrameBinDiscovery:
         The nature detection probes count toward total experiments.
         Binary detection is DISCOVERED, not hardcoded.
 
+        Args:
+            probe_fn: Function that probes a single action value and returns ProbeResult.
+            wire_precision: Optional dict with wire format metadata from adapter.
+                Keys: wire_type, wire_bits, wire_min, wire_max,
+                      float_min, float_max, float_step.
+
         Returns:
             (a_max, a_min) or (None, None) if action has no effect.
         """
         # ===========================================
         # STAGE 1: Detect action nature (binary vs analog)
         # ===========================================
-        nature = self.detect_action_nature(probe_fn)
+        nature = self.detect_action_nature(probe_fn, wire_precision=wire_precision)
 
         if nature == 'none':
             logger.warning(f"  Action has no detectable effect.")
             return None, None
 
         if nature == 'binary':
-            return self._run_binary_discovery(probe_fn)
+            return self._run_binary_discovery(probe_fn, wire_precision=wire_precision)
 
         # ===========================================
         # STAGE 2B: ANALOG PATH -- Sutton's full algorithm

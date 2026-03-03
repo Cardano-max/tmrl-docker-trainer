@@ -315,7 +315,8 @@ def make_probe_fn(
 def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
                        actions_to_run: list = None,
                        frame_duration_s: float = 0.01,
-                       precision: dict = None):
+                       precision: dict = None,
+                       wire_precision: dict = None):
     """
     Run Sutton's bin discovery on TMNF.
 
@@ -341,6 +342,10 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
         logger.info(f"  Speed epsilon: {precision['speed_epsilon']:.15g} (measured)")
         logger.info(f"  Yaw epsilon:   {precision['yaw_epsilon']:.15g} (measured)")
         logger.info(f"  Deterministic: {precision['deterministic']}")
+    if wire_precision:
+        logger.info(f"  Wire precision: probes derived from adapter wire format")
+        for ch_name, ch_info in wire_precision.items():
+            logger.info(f"    {ch_name}: {ch_info['wire_type']} step={ch_info['float_step']:.6g}")
     logger.info(f"  Ranges:   DISCOVERED (exponential sweep from 1e6)")
     logger.info(f"  Epsilons: DISCOVERED (from D0 probe variance)")
     logger.info("")
@@ -395,7 +400,9 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
         )
 
         # Run two-stage discovery: nature detection + appropriate algorithm
-        a_max, a_min = disc.run_discovery(probe_fn)
+        # Pass per-channel wire precision if available (Sutton: "first find the system's precision")
+        action_wire_prec = wire_precision.get(action_name) if wire_precision else None
+        a_max, a_min = disc.run_discovery(probe_fn, wire_precision=action_wire_prec)
 
         dt = time.time() - t0
 
@@ -491,7 +498,8 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
 # =============================================================================
 
 def save_results(results: dict, use_rewind: bool,
-                 frame_duration_s: float, precision: dict) -> str:
+                 frame_duration_s: float, precision: dict,
+                 wire_precision: dict = None) -> str:
     """Save discovery results to JSON file."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"tmnf_phase_a_results_{timestamp}.json"
@@ -508,6 +516,7 @@ def save_results(results: dict, use_rewind: bool,
         'algorithm':     'sutton_downward_sweep',
         'ticks_per_probe': 2,
         'ticks_per_probe_note': '1 tick input delay + 1 tick measurement, same for ALL actions',
+        'wire_precision': wire_precision,
         'precision': {
             'speed_epsilon': precision['speed_epsilon'],
             'yaw_epsilon': precision['yaw_epsilon'],
@@ -554,6 +563,8 @@ def main():
                         help='Only discover left/right steering')
     parser.add_argument('--actions', type=str, default=None,
                         help='Comma-separated actions (e.g. gas,left,right)')
+    parser.add_argument('--from-zero', action='store_true',
+                        help='Test from current speed (skip acceleration to MIN_PROBE_SPEED)')
     args = parser.parse_args()
 
     use_rewind = not args.no_rewind
@@ -593,26 +604,33 @@ def main():
         logger.info(f"Game speed set to {args.speed}x")
 
     try:
+        # ---- Get wire precision from adapter (Sutton: "first find the system's precision") ----
+        wire_prec = adapter.get_wire_precision()
+        logger.info(f"  Wire precision: {wire_prec}")
+
         # ---- STEP 0: Measure frame duration from environment ----
         frame_duration_s = measure_frame_duration(adapter)
 
         # ---- Get car moving (Sutton: "test from whatever state") ----
         # Need high speed for 1-tick steering to produce measurable yaw.
-        # TMNF physics: tire lateral force ∝ speed. At low speed (60 km/h),
+        # TMNF physics: tire lateral force proportional to speed. At low speed (60 km/h),
         # 1 tick of digital left produces 0 additional yaw vs D0.
         # At 200 km/h, 2-tick left gives yaw diff of ~2e-5 (clearly detectable).
         # Measured empirically: 60 km/h = 0 diff, 200 km/h = 1.98e-5 diff.
-        MIN_PROBE_SPEED = 200.0
-        fb = adapter.get_feedbacks()
-        speed = fb.get('speed', 0)
-        if speed < MIN_PROBE_SPEED:
-            logger.info(f"  Accelerating to {MIN_PROBE_SPEED} km/h...")
-            while speed < MIN_PROBE_SPEED:
-                adapter.send_action_dict({'gas': 1.0, 'brake': 0.0, 'steering': 0.0})
-                adapter.wait_one_tick()
-                fb = adapter.get_feedbacks()
-                speed = fb.get('speed', 0)
-            logger.info(f"  Speed: {speed:.1f} km/h")
+        if args.from_zero:
+            logger.info("  --from-zero: testing from current speed (Sutton: 'try from zero speed')")
+        else:
+            MIN_PROBE_SPEED = 200.0
+            fb = adapter.get_feedbacks()
+            speed = fb.get('speed', 0)
+            if speed < MIN_PROBE_SPEED:
+                logger.info(f"  Accelerating to {MIN_PROBE_SPEED} km/h...")
+                while speed < MIN_PROBE_SPEED:
+                    adapter.send_action_dict({'gas': 1.0, 'brake': 0.0, 'steering': 0.0})
+                    adapter.wait_one_tick()
+                    fb = adapter.get_feedbacks()
+                    speed = fb.get('speed', 0)
+                logger.info(f"  Speed: {speed:.1f} km/h")
 
         # Release inputs
         adapter.send_action_dict({n: 0.0 for n in TMNF_ACTIONS_CONFIG})
@@ -626,11 +644,13 @@ def main():
             adapter, use_rewind=use_rewind,
             actions_to_run=actions_to_run,
             frame_duration_s=frame_duration_s,
-            precision=precision
+            precision=precision,
+            wire_precision=wire_prec
         )
 
         # ---- Save ----
-        save_results(results, use_rewind, frame_duration_s, precision)
+        save_results(results, use_rewind, frame_duration_s, precision,
+                     wire_precision=wire_prec)
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
