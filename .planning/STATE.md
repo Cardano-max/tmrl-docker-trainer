@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-04 - Completed quick task 16: Fix Excel probe display — last probe is VERIFY not BIN SEARCH, validated all 43 midpoint calculations correct
+Last activity: 2026-03-04 - Completed quick task 17: Live per-variable multi-graph recording test -- 538-line script, 25 frames, 5 FalkorDB graphs, Sutton-format output
 
 Progress: [██████░░░░] 58%
 
@@ -158,6 +158,9 @@ Recent decisions affecting current work:
 - [quick-14]: Combined bracket (saturated->D0 directly) means MAX=MIN for binary actions
 - [quick-14]: wire_precision parameter kept in signature for backward compat but ignored internally
 - [quick-14]: detect_action_nature() and _run_binary_discovery() preserved as deprecated (not deleted)
+- [Phase quick-17]: Load bins from latest tmnf_phase_a_results_*.json with hardcoded fallback defaults
+- [Phase quick-17]: In-memory fallback uses VariableGraph._discretize() for consistent discretization
+- [Phase quick-17]: No KnowledgeManager import -- pure Phase 3 test (MultiGraphManager only)
 
 ### Pending Todos
 
@@ -181,9 +184,10 @@ None.
 | 14 | Pure Sutton single-algorithm discovery: combined bracket binary detection, no pre-classification, no wire precision, 3/3 offline tests | 2026-03-04 | 94ca77c | [14-pure-sutton-discovery-remove-wire-precis](./quick/14-pure-sutton-discovery-remove-wire-precis/) |
 | 15 | Update Excel with Pure Sutton 5-run results: 9 sheets, probe-level data, MAX=MIN=0.00196 for all binary actions | 2026-03-04 | 54cc04c | [15-update-excel-spreadsheet-with-latest-pur](./quick/15-update-excel-spreadsheet-with-latest-pur/) |
 | 16 | Fix Excel probe display: last probe is VERIFY not BIN SEARCH, validated all 43 midpoint calculations correct | 2026-03-04 | 4950565 | [16-fix-excel-probe-display-last-probe-is-ve](./quick/16-fix-excel-probe-display-last-probe-is-ve/) |
+| 17 | Live per-variable multi-graph recording test: 538-line script, 25 frames across 4 phases into 5 FalkorDB graphs with Sutton-format output | 2026-03-04 | 1029373 | [17-live-graph-recording-test-record-per-fra](./quick/17-live-graph-recording-test-record-per-fra/) |
 
 ## Session Continuity
 
 Last session: 2026-03-04
-Stopped at: Completed quick-16 (Excel probe display fix). All midpoint calculations validated correct.
+Stopped at: Completed quick-17 (Live per-variable multi-graph recording test). Syntax and argparse verified.
 Resume file: None
