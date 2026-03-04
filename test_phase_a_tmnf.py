@@ -399,14 +399,14 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
             frame_duration_s
         )
 
-        # Run two-stage discovery: nature detection + appropriate algorithm
-        # Pass per-channel wire precision if available (Sutton: "first find the system's precision")
-        action_wire_prec = wire_precision.get(action_name) if wire_precision else None
-        a_max, a_min = disc.run_discovery(probe_fn, wire_precision=action_wire_prec)
+        # Run pure Sutton single-algorithm discovery
+        # Nature (binary/analog) is discovered by the sweep itself, not pre-classified.
+        # Wire precision is no longer needed -- the algorithm discovers everything from probing.
+        a_max, a_min = disc.run_discovery(probe_fn)
 
         dt = time.time() - t0
 
-        # Nature detection result from two-stage model
+        # Nature discovered by the pure Sutton sweep (binary/analog/none)
         nature = disc.nature or 'unknown'
 
         if a_max is not None and a_min is not None:
@@ -414,7 +414,7 @@ def run_discovery_tmnf(adapter: TMNFAdapter, use_rewind: bool = True,
             inferred_type = 'binary' if len(bins) <= 2 else 'analog'
 
             logger.info(f"\n  RESULT: {action_name}")
-            logger.info(f"    Nature = {nature} (DISCOVERED by multi-magnitude probing)")
+            logger.info(f"    Nature = {nature} (DISCOVERED by exponential sweep)")
             logger.info(f"    MAX    = {a_max:.10g}")
             logger.info(f"    MIN    = {a_min:.10g}")
             logger.info(f"    D0     = {disc.delta_0:.10g}")
