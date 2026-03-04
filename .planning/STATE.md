@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-04 - Completed quick task 14: Pure Sutton single-algorithm discovery rewrite (no pre-classification, combined bracket binary detection, 3/3 offline tests)
+Last activity: 2026-03-04 - Completed quick task 15: Update Excel with Pure Sutton 5-run results (9 sheets, MAX=MIN=0.00196)
 
 Progress: [██████░░░░] 58%
 
@@ -179,9 +179,10 @@ None.
 | 11 | Precision-first discovery rewrite: wire precision API, faithful uint8 quantization, derived probes, wire-step MIN floor, 6/6 offline tests PASS | 2026-03-03 | ec65210 | [11-full-precision-first-rewrite-discover-sy](./quick/11-full-precision-first-rewrite-discover-sy/) |
 | 12 | Deep Sutton transcript analysis + implementation verification: 9 gaps, algorithm O(log i) optimal, uint8 verdict, 5 hallucinations confirmed | 2026-03-04 | 2f8e448 | [12-deep-sutton-transcript-re-read-implement](./quick/12-deep-sutton-transcript-re-read-implement/) |
 | 14 | Pure Sutton single-algorithm discovery: combined bracket binary detection, no pre-classification, no wire precision, 3/3 offline tests | 2026-03-04 | 94ca77c | [14-pure-sutton-discovery-remove-wire-precis](./quick/14-pure-sutton-discovery-remove-wire-precis/) |
+| 15 | Update Excel with Pure Sutton 5-run results: 9 sheets, probe-level data, MAX=MIN=0.00196 for all binary actions | 2026-03-04 | 54cc04c | [15-update-excel-spreadsheet-with-latest-pur](./quick/15-update-excel-spreadsheet-with-latest-pur/) |
 
 ## Session Continuity
 
 Last session: 2026-03-04
-Stopped at: Completed quick-14 (pure Sutton single-algorithm discovery rewrite). 3 tasks, 3 commits, 3/3 offline tests pass.
+Stopped at: Completed quick-15 (Excel update with pure Sutton results). 9 sheets, all probe data from 5 live runs.
 Resume file: None
