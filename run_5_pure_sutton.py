@@ -145,8 +145,13 @@ def run_single_discovery(adapter, run_num, actions_to_run, use_rewind,
     intelligence.start_time = time.time()
 
     if use_rewind:
-        adapter.save_state()
-        logger.info("  State saved for this run")
+        # Rewind to the state saved by main() (at 200 km/h) so every run
+        # starts from the EXACT same state.  Without this, the car drifts
+        # between runs and steering deltas become undetectable.
+        adapter.rewind()
+        adapter.wait_one_tick()   # let _state_bytes sync
+        adapter.save_state()      # re-save as probe restore point
+        logger.info("  State restored & saved for this run")
 
     results = {}
 
