@@ -44,6 +44,7 @@ D0_FILL = PatternFill("solid", fgColor="C6EFCE")        # Green
 SWEEP_FILL = PatternFill("solid", fgColor="FFF2CC")      # Yellow
 BRACKET_FILL = PatternFill("solid", fgColor="F4B084")    # Orange
 BSEARCH_FILL = PatternFill("solid", fgColor="BDD7EE")   # Blue
+VERIFY_FILL = PatternFill("solid", fgColor="E2EFDA")     # Light green (verification)
 RESULT_FILL = PatternFill("solid", fgColor="D9E2F3")     # Light blue
 PASS_FILL = PatternFill("solid", fgColor="C6EFCE")       # Green
 FAIL_FILL = PatternFill("solid", fgColor="FFC7CE")       # Red
@@ -205,11 +206,14 @@ def _fmt_val(v):
     return f"{v:.18g}"
 
 
-def _annotate_probes(probes, delta_0, delta_max):
+def _annotate_probes(probes, delta_0, delta_max, search_precision=None):
     """
     Walk through every probe and reconstruct the FULL algorithm state:
     - phase, bracket [low, high], midpoint formula, what we did, what we got,
       what it means, decision, and the bracket AFTER the decision.
+
+    If search_precision is provided, detects when the binary search converged
+    and the remaining probes are verification probes (not midpoints).
 
     Returns a list of dicts, one per probe.
     """
@@ -349,11 +353,68 @@ def _annotate_probes(probes, delta_0, delta_max):
             annotated.append(row)
             continue
 
-        # ---- Binary search phase ----
-        row['phase'] = "BIN SEARCH"
-        row['fill'] = 'BSEARCH'
+        # ---- Check if this is a VERIFICATION probe (not a midpoint) ----
+        # After binary search converges (bracket_width <= search_precision),
+        # the algorithm does one final probe at the returned value to confirm.
+        # Detect this: if the expected midpoint doesn't match the actual value,
+        # OR if the bracket is already converged.
+        expected_mid = (bracket_low + bracket_high) / 2.0
+        bracket_width = abs(bracket_high - bracket_low)
+        is_converged = (
+            (search_precision is not None and bracket_width <= search_precision) or
+            expected_mid == bracket_low or expected_mid == bracket_high
+        )
+        is_verification = is_converged or (abs(val - expected_mid) > 1e-20 and val == bracket_high)
+
         row['same_d0'] = "YES" if is_same_d0 else "NO"
         row['same_dmax'] = "YES" if is_same_dmax else "NO"
+
+        if is_verification:
+            # --- VERIFICATION PROBE (not a binary search midpoint) ---
+            row['phase'] = "VERIFY"
+            row['fill'] = 'VERIFY'
+            row['bracket'] = f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+            row['how_value_calculated'] = (
+                f"NOT a midpoint! Binary search STOPPED because bracket width "
+                f"({bracket_width:.2e}) <= precision ({search_precision:.2e}). "
+                f"This probe CONFIRMS the result by re-testing a_min = {_fmt_val(val)}."
+            )
+            row['what_we_did'] = (
+                f"VERIFICATION: Binary search converged. Bracket [{_fmt_val(bracket_low)}, "
+                f"{_fmt_val(bracket_high)}] is narrower than our measurement precision "
+                f"({search_precision:.2e}). We can't narrow it further. "
+                f"Probe the result value {_fmt_val(val)} to confirm it works."
+            )
+            if is_same_dmax:
+                row['what_we_got'] = (
+                    f"Speed delta = {delta:.10g} = SATURATED. CONFIRMED: "
+                    f"value {_fmt_val(val)} IS above the threshold — action is ON."
+                )
+                row['what_it_means'] = (
+                    f"The returned MIN = {_fmt_val(val)} is the smallest value we found "
+                    f"that produces an effect. For binary actions, MAX = MIN = this value. "
+                    f"The exact threshold is somewhere in the final bracket "
+                    f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}] but we can't "
+                    f"pin it down further — we've hit the limits of float64 precision."
+                )
+                row['why'] = (
+                    f"DONE. Binary search ran {p_idx} steps, narrowing from "
+                    f"[0.001, 0.01] (width 0.009) down to width {bracket_width:.2e}. "
+                    f"That's {bracket_width/0.009:.2e}x smaller — we found the threshold "
+                    f"to ~15 decimal places of precision."
+                )
+            else:
+                row['what_we_got'] = f"Speed delta = {delta:.10g} = D0 (no effect)."
+                row['what_it_means'] = "Verification probe returned D0 (unexpected for returned MIN value)."
+                row['why'] = "This is an edge case at float64 precision limits."
+
+            row['bracket_after'] = f"CONVERGED: [{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+            annotated.append(row)
+            continue
+
+        # ---- Binary search phase (actual midpoint probe) ----
+        row['phase'] = "BIN SEARCH"
+        row['fill'] = 'BSEARCH'
 
         # Show how this midpoint was calculated from the bracket
         row['how_value_calculated'] = f"mid = ({_fmt_val(bracket_low)} + {_fmt_val(bracket_high)}) / 2 = {_fmt_val(val)}"
@@ -415,6 +476,7 @@ FILL_MAP = {
     'SWEEP': SWEEP_FILL,
     'BRACKET': BRACKET_FILL,
     'BSEARCH': BSEARCH_FILL,
+    'VERIFY': VERIFY_FILL,
 }
 
 
@@ -431,15 +493,17 @@ for run_idx, run_data in enumerate(RUNS):
     ws.cell(row=6, column=2, value="Yellow = Exponential sweep probe (1e6, 1e5, ..., 1e-6)").fill = SWEEP_FILL
     ws.cell(row=7, column=2, value="Orange = COMBINED BRACKET found (saturated -> D0 directly = BINARY)").fill = BRACKET_FILL
     ws.cell(row=8, column=2, value="Blue = Binary search probe (narrowing bracket to exact threshold)").fill = BSEARCH_FILL
+    ws.cell(row=9, column=2, value="Light Green = VERIFICATION probe (binary search converged, confirming result)").fill = VERIFY_FILL
 
-    ws.cell(row=10, column=1, value="HOW TO READ THIS TABLE:").font = Font(bold=True, size=12)
-    ws.cell(row=11, column=1, value="Each row is ONE probe: we rewind the game to saved state, send one action value for 1 frame, measure the speed change (delta).")
-    ws.cell(row=12, column=1, value="'Same as D0?' = did the game respond the same as doing nothing? YES means this value had NO EFFECT.")
-    ws.cell(row=13, column=1, value="'Same as Saturated?' = did the game respond with the maximum effect? YES means this value is still 'big enough' to be fully ON.")
-    ws.cell(row=14, column=1, value="'Bracket [low,high]' = the range where the threshold MUST be. Binary search halves this range each step.")
-    ws.cell(row=15, column=1, value="'How Value Calculated' = shows the formula: for sweep it's powers of 10; for binary search it's (low+high)/2.")
+    ws.cell(row=11, column=1, value="HOW TO READ THIS TABLE:").font = Font(bold=True, size=12)
+    ws.cell(row=12, column=1, value="Each row is ONE probe: we rewind the game to saved state, send one action value for 1 frame, measure the speed change (delta).")
+    ws.cell(row=13, column=1, value="'Same as D0?' = did the game respond the same as doing nothing? YES means this value had NO EFFECT.")
+    ws.cell(row=14, column=1, value="'Same as Saturated?' = did the game respond with the maximum effect? YES means this value is still 'big enough' to be fully ON.")
+    ws.cell(row=15, column=1, value="'Bracket [low,high]' = the range where the threshold MUST be. Binary search halves this range each step.")
+    ws.cell(row=16, column=1, value="'How Value Calculated' = shows the formula: for sweep it's powers of 10; for binary search it's mid = (low+high)/2.")
+    ws.cell(row=17, column=1, value="LAST probe (VERIFY) = binary search converged. Bracket is narrower than measurement precision. This is a confirmation, not a midpoint.")
 
-    current_row = 17
+    current_row = 19
 
     for action_name in ['gas', 'brake', 'left', 'right']:
         r = results.get(action_name, {})
@@ -468,7 +532,8 @@ for run_idx, run_data in enumerate(RUNS):
         current_row += 1
 
         # Annotate all probes with full algorithm state
-        annotated = _annotate_probes(probes, delta_0, delta_max)
+        annotated = _annotate_probes(probes, delta_0, delta_max,
+                                     search_precision=PRECISION['speed_epsilon'])
 
         # Probe header -- 11 columns for full educational detail
         headers = [
