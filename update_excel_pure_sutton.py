@@ -179,7 +179,245 @@ ws.cell(row=r+2, column=1, value="This means: ONE probe per value is sufficient.
 auto_width(ws)
 
 
-# ===== SHEETS 3-7: Run 1..5 =====
+# ===== SHEETS 3-7: Run 1..5 (FULL EDUCATIONAL DETAIL) =====
+#
+# Build set of exponential sweep values once (shared across all runs/actions)
+_sweep_vals = set()
+_sv = 1e6
+while _sv >= 1e-7:
+    _sweep_vals.add(round(_sv, 15))
+    _sv /= 10.0
+
+
+def _is_close(a, b, rel=1e-9, abs_tol=1e-12):
+    """Check if two floats are effectively equal."""
+    return abs(a - b) < max(abs(b) * rel, abs_tol)
+
+
+def _fmt_val(v):
+    """Format a probe value for display: scientific if tiny, else full precision."""
+    if v == 0.0:
+        return "0.0"
+    if abs(v) >= 1.0:
+        return f"{v:.0f}"
+    # For values between 0 and 1, show full precision so binary search
+    # bracket convergence is visible (e.g., 0.001960784313725412 vs 0.0019607843137264356)
+    return f"{v:.18g}"
+
+
+def _annotate_probes(probes, delta_0, delta_max):
+    """
+    Walk through every probe and reconstruct the FULL algorithm state:
+    - phase, bracket [low, high], midpoint formula, what we did, what we got,
+      what it means, decision, and the bracket AFTER the decision.
+
+    Returns a list of dicts, one per probe.
+    """
+    annotated = []
+
+    # Exponential sweep sequence (for recognizing sweep probes)
+    sweep_sequence = []
+    v = 1e6
+    while v >= 1e-7:
+        sweep_sequence.append(round(v, 15))
+        v /= 10.0
+    sweep_set = {round(sv, 10) for sv in sweep_sequence}
+    sweep_idx = 0  # tracks position in the sweep sequence
+
+    bracket_found = False
+    combined_bracket = False
+    bracket_low = None
+    bracket_high = None
+    prev_val = None          # value of previous sweep probe (for bracket detection)
+    prev_sweep_val = None    # last sweep value (used when bracket is found)
+    delta_max_observed = None  # first non-D0 delta from sweep
+
+    for p_idx, p in enumerate(probes):
+        val = p['action_value']
+        delta = p['delta']
+        is_same_d0 = _is_close(delta, delta_0) if delta_0 is not None else False
+        is_same_dmax = _is_close(delta, delta_max) if delta_max is not None else False
+
+        row = {
+            'num': p_idx + 1,
+            'val': val,
+            'delta': delta,
+            'is_same_d0': is_same_d0,
+            'is_same_dmax': is_same_dmax,
+        }
+
+        # ---- D0 probe (action = 0.0) ----
+        if val == 0.0:
+            row['phase'] = "D0"
+            row['fill'] = 'D0'
+            row['same_d0'] = "--"
+            row['same_dmax'] = "--"
+            row['how_value_calculated'] = "Fixed: action = 0.0 (doing nothing)"
+            row['what_we_did'] = f"Sent action=0.0 to the game for 1 frame ({FRAME_MS}ms)"
+            row['what_we_got'] = f"Speed delta = {delta:.10g}"
+            row['what_it_means'] = "This is D0 — the speed change when we do NOTHING. " \
+                                   "Car is decelerating from friction/gravity."
+            row['why'] = "Sutton: 'not doing an action is also an action' (Feb 16). " \
+                         "We need D0 as reference to know if other actions have any effect."
+            row['bracket'] = ""
+            row['bracket_after'] = ""
+            annotated.append(row)
+            continue
+
+        # ---- Exponential sweep phase ----
+        if not bracket_found and round(val, 10) in sweep_set:
+            row['same_d0'] = "YES" if is_same_d0 else "NO"
+            row['same_dmax'] = "YES" if is_same_dmax else "NO"
+
+            # Which power of 10 is this?
+            exp = 0
+            tmp = val
+            while tmp >= 10:
+                exp += 1
+                tmp /= 10
+            while tmp < 1 and tmp > 0:
+                exp -= 1
+                tmp *= 10
+            row['how_value_calculated'] = f"Exponential sweep: 10^{exp}" if val >= 1 else f"Exponential sweep: {val:.0e}"
+
+            if delta_max_observed is None and not is_same_d0:
+                # First non-D0 delta = saturated (delta_max)
+                delta_max_observed = delta
+                row['phase'] = f"SWEEP 10^{exp}" if val >= 1 else f"SWEEP {val:.0e}"
+                row['fill'] = 'SWEEP'
+                row['what_we_did'] = f"Sent action={_fmt_val(val)} for 1 frame"
+                row['what_we_got'] = f"Speed delta = {delta:.10g} — NOT equal to D0!"
+                row['what_it_means'] = "FIRST non-D0 delta! This is the 'saturated' delta (delta_max). " \
+                                       "The game IS responding to this action."
+                row['why'] = "Sutton: sweep from largest to smallest. The first value " \
+                             "that causes a different delta than D0 tells us the action has an effect. " \
+                             "This is delta_max — the maximum effect this action can have."
+                row['bracket'] = ""
+                row['bracket_after'] = ""
+            elif is_same_dmax:
+                row['phase'] = f"SWEEP 10^{exp}" if val >= 1 else f"SWEEP {val:.0e}"
+                row['fill'] = 'SWEEP'
+                row['what_we_did'] = f"Sent action={_fmt_val(val)} for 1 frame"
+                row['what_we_got'] = f"Speed delta = {delta:.10g} = SAME as delta_max"
+                row['what_it_means'] = "Still saturated — this value is still 'big enough' " \
+                                       "to produce the maximum effect. No change from previous probe."
+                row['why'] = "Keep sweeping downward. We haven't found where the effect changes yet. " \
+                             "Sutton: 'as you bring the value down... when does it change?'"
+                row['bracket'] = ""
+                row['bracket_after'] = ""
+            elif is_same_d0:
+                # Saturated -> D0 directly = COMBINED BRACKET (binary!)
+                bracket_found = True
+                combined_bracket = True
+                bracket_low = val
+                bracket_high = prev_sweep_val if prev_sweep_val is not None else val * 10
+                row['phase'] = f"SWEEP {val:.0e}"
+                row['fill'] = 'BRACKET'
+                row['what_we_did'] = f"Sent action={_fmt_val(val)} for 1 frame"
+                row['what_we_got'] = f"Speed delta = {delta:.10g} = SAME AS D0!"
+                row['what_it_means'] = (
+                    f"CRITICAL MOMENT: Delta jumped from saturated ({delta_max:.10g}) "
+                    f"directly to D0 ({delta_0:.10g}). No intermediate values! "
+                    f"This means the action is BINARY — it's either fully ON or fully OFF."
+                )
+                row['why'] = (
+                    f"Sutton: 'when the delta changes, that's when you figured out the max'. "
+                    f"Since it went straight to D0 (not to some intermediate), MAX and MIN "
+                    f"are at the SAME boundary. We have a COMBINED bracket."
+                )
+                row['bracket'] = f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+                row['bracket_after'] = f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+            else:
+                # Saturated -> intermediate = ANALOG MAX bracket
+                bracket_found = True
+                combined_bracket = False
+                bracket_low = val
+                bracket_high = prev_sweep_val if prev_sweep_val is not None else val * 10
+                row['phase'] = f"SWEEP {val:.0e}"
+                row['fill'] = 'BRACKET'
+                row['what_we_did'] = f"Sent action={_fmt_val(val)} for 1 frame"
+                row['what_we_got'] = f"Speed delta = {delta:.10g} — DIFFERENT from saturated AND D0"
+                row['what_it_means'] = (
+                    f"Delta changed from saturated to an intermediate value. "
+                    f"This means the action is ANALOG. MAX bracket found."
+                )
+                row['why'] = "Sutton: the point where delta first changes from saturated is MAX."
+                row['bracket'] = f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+                row['bracket_after'] = f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+
+            prev_sweep_val = val
+            annotated.append(row)
+            continue
+
+        # ---- Binary search phase ----
+        row['phase'] = "BIN SEARCH"
+        row['fill'] = 'BSEARCH'
+        row['same_d0'] = "YES" if is_same_d0 else "NO"
+        row['same_dmax'] = "YES" if is_same_dmax else "NO"
+
+        # Show how this midpoint was calculated from the bracket
+        row['how_value_calculated'] = f"mid = ({_fmt_val(bracket_low)} + {_fmt_val(bracket_high)}) / 2 = {_fmt_val(val)}"
+        row['bracket'] = f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+
+        row['what_we_did'] = (
+            f"Binary search: bracket is [{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]. "
+            f"Sent midpoint = {_fmt_val(val)}"
+        )
+
+        if is_same_dmax:
+            # Above threshold — effect is ON → move high down
+            old_high = bracket_high
+            bracket_high = val
+            row['what_we_got'] = (
+                f"Speed delta = {delta:.10g} = SATURATED (same as delta_max). "
+                f"This value is ABOVE the threshold — action is ON."
+            )
+            row['what_it_means'] = (
+                f"The midpoint {_fmt_val(val)} still produces the full effect. "
+                f"So the threshold must be BELOW this value."
+            )
+            row['why'] = (
+                f"Since {_fmt_val(val)} is above threshold, we move HIGH down to {_fmt_val(val)}. "
+                f"New bracket: [{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]. "
+                f"Width halved from {abs(old_high - bracket_low):.6g} to {abs(bracket_high - bracket_low):.6g}."
+            )
+        elif is_same_d0:
+            # Below threshold — effect is OFF → move low up
+            old_low = bracket_low
+            bracket_low = val
+            row['what_we_got'] = (
+                f"Speed delta = {delta:.10g} = D0 (no effect). "
+                f"This value is BELOW the threshold — action is OFF."
+            )
+            row['what_it_means'] = (
+                f"The midpoint {_fmt_val(val)} has NO effect (same as doing nothing). "
+                f"So the threshold must be ABOVE this value."
+            )
+            row['why'] = (
+                f"Since {_fmt_val(val)} is below threshold, we move LOW up to {_fmt_val(val)}. "
+                f"New bracket: [{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]. "
+                f"Width halved from {abs(bracket_high - old_low):.6g} to {abs(bracket_high - bracket_low):.6g}."
+            )
+        else:
+            row['what_we_got'] = f"Speed delta = {delta:.10g} — INTERMEDIATE"
+            row['what_it_means'] = "Delta is between D0 and saturated. Analog intermediate value."
+            row['why'] = "Adjust bracket accordingly."
+
+        row['bracket_after'] = f"[{_fmt_val(bracket_low)}, {_fmt_val(bracket_high)}]"
+        annotated.append(row)
+
+    return annotated
+
+
+# Fill map for phase names
+FILL_MAP = {
+    'D0': D0_FILL,
+    'SWEEP': SWEEP_FILL,
+    'BRACKET': BRACKET_FILL,
+    'BSEARCH': BSEARCH_FILL,
+}
+
+
 for run_idx, run_data in enumerate(RUNS):
     run_num = run_data['run']
     results = run_data['results']
@@ -192,14 +430,16 @@ for run_idx, run_data in enumerate(RUNS):
     ws.cell(row=5, column=2, value="Green = D0 probe (action=0, 'doing nothing is also an action')").fill = D0_FILL
     ws.cell(row=6, column=2, value="Yellow = Exponential sweep probe (1e6, 1e5, ..., 1e-6)").fill = SWEEP_FILL
     ws.cell(row=7, column=2, value="Orange = COMBINED BRACKET found (saturated -> D0 directly = BINARY)").fill = BRACKET_FILL
-    ws.cell(row=8, column=2, value="Blue = Binary search probe (narrowing to exact threshold)").fill = BSEARCH_FILL
+    ws.cell(row=8, column=2, value="Blue = Binary search probe (narrowing bracket to exact threshold)").fill = BSEARCH_FILL
 
-    ws.cell(row=10, column=1, value="KEY FINDING: MAX = MIN for binary actions").font = Font(bold=True, size=12)
-    ws.cell(row=11, column=1, value="Sutton: 'when the delta changes, that's when you figured out the max' (Jan 24)")
-    ws.cell(row=12, column=1, value="For binary actions, delta goes saturated -> D0 directly (no intermediate values).")
-    ws.cell(row=13, column=1, value="So MAX bracket = MIN bracket = the SAME bracket. Binary search gives MAX = MIN = threshold.")
+    ws.cell(row=10, column=1, value="HOW TO READ THIS TABLE:").font = Font(bold=True, size=12)
+    ws.cell(row=11, column=1, value="Each row is ONE probe: we rewind the game to saved state, send one action value for 1 frame, measure the speed change (delta).")
+    ws.cell(row=12, column=1, value="'Same as D0?' = did the game respond the same as doing nothing? YES means this value had NO EFFECT.")
+    ws.cell(row=13, column=1, value="'Same as Saturated?' = did the game respond with the maximum effect? YES means this value is still 'big enough' to be fully ON.")
+    ws.cell(row=14, column=1, value="'Bracket [low,high]' = the range where the threshold MUST be. Binary search halves this range each step.")
+    ws.cell(row=15, column=1, value="'How Value Calculated' = shows the formula: for sweep it's powers of 10; for binary search it's (low+high)/2.")
 
-    current_row = 15
+    current_row = 17
 
     for action_name in ['gas', 'brake', 'left', 'right']:
         r = results.get(action_name, {})
@@ -215,106 +455,105 @@ for run_idx, run_data in enumerate(RUNS):
         max_eq_min = r.get('max_eq_min', False)
         probes = r.get('probe_data', [])
 
-        ws.cell(row=current_row, column=1, value=f"ACTION: {action_name.upper()}").font = Font(bold=True, size=12)
+        ws.cell(row=current_row, column=1, value=f"ACTION: {action_name.upper()}").font = Font(bold=True, size=14)
         current_row += 1
 
         if a_max is not None:
             ws.cell(row=current_row, column=1,
-                    value=f"Nature: {nature.upper()}  |  Bins: {bins}  |  "
-                          f"MAX: {a_max:.12g}  |  MIN: {a_min:.12g}  |  "
-                          f"MAX=MIN: {'YES' if max_eq_min else 'NO'}  |  "
-                          f"D0: {delta_0:.10g}  |  delta_max: {delta_max:.10g}")
+                    value=f"Result: Nature={nature.upper()}  |  MAX={a_max:.15g}  |  MIN={a_min:.15g}  |  "
+                          f"MAX=MIN: {'YES (binary!)' if max_eq_min else 'NO (analog)'}  |  "
+                          f"D0={delta_0:.10g}  |  delta_max={delta_max:.10g}  |  Probes: {len(probes)}")
         else:
-            ws.cell(row=current_row, column=1, value=f"Nature: {nature.upper()}  |  NO DETECTABLE RANGE")
+            ws.cell(row=current_row, column=1, value=f"Result: Nature={nature.upper()}  |  NO DETECTABLE RANGE")
         current_row += 1
 
-        # Probe header
-        headers = ["#", "Phase", "Action Value", "Delta",
-                   "Same as D0?", "Same as delta_max?", "Decision"]
+        # Annotate all probes with full algorithm state
+        annotated = _annotate_probes(probes, delta_0, delta_max)
+
+        # Probe header -- 11 columns for full educational detail
+        headers = [
+            "#",                        # 1
+            "Phase",                    # 2
+            "Action Value Sent",        # 3
+            "How Value Calculated",     # 4
+            "Speed Delta (measured)",   # 5
+            "Same as D0?",              # 6
+            "Same as Saturated?",       # 7
+            "Bracket BEFORE",           # 8
+            "What We Did",              # 9
+            "What We Got",              # 10
+            "What It Means",            # 11
+            "Decision & Why",           # 12
+            "Bracket AFTER",            # 13
+        ]
         set_header_row(ws, current_row, headers)
         current_row += 1
 
-        # Build set of exponential sweep values for phase classification
-        import math as _math
-        sweep_vals = set()
-        v = 1e6
-        while v >= 1e-7:
-            sweep_vals.add(round(v, 15))
-            v /= 10.0
+        for a in annotated:
+            fill = FILL_MAP.get(a['fill'], None)
 
-        bracket_found = False
-
-        # Classify each probe
-        for p_idx, p in enumerate(probes):
-            val = p['action_value']
-            delta = p['delta']
-
-            is_d0 = (val == 0.0)
-            is_same_d0 = (delta_0 is not None and abs(delta - delta_0) < max(abs(delta_0) * 1e-9, 1e-12))
-            is_same_dmax = (delta_max is not None and abs(delta - delta_max) < max(abs(delta_max) * 1e-9, 1e-12))
-            same_d0 = "YES" if is_same_d0 else "NO"
-            same_dmax = "YES" if is_same_dmax else "NO"
-
-            if is_d0:
-                phase = "D0"
-                fill = D0_FILL
-                decision = "Baseline (action=0 is also an action -- Sutton Feb 16)"
-                same_d0 = "--"
-                same_dmax = "--"
-            elif not bracket_found and round(val, 10) in {round(sv, 10) for sv in sweep_vals}:
-                # Exponential sweep probe
-                phase = f"SWEEP {val:.0e}" if val >= 1.0 else f"SWEEP {val:.1e}"
-                fill = SWEEP_FILL
-                if is_same_d0:
-                    decision = "= D0 -> COMBINED BRACKET FOUND (binary!)"
-                    fill = BRACKET_FILL
-                    bracket_found = True
-                elif is_same_dmax:
-                    decision = "SATURATED (identical to delta_max)"
-                else:
-                    decision = "INTERMEDIATE (between saturated and D0)"
-                    bracket_found = True  # MAX bracket found
-            else:
-                # Binary search probe (after bracket found)
-                phase = "BIN SEARCH"
-                fill = BSEARCH_FILL
-                if is_same_d0:
-                    decision = "= D0 (below threshold, low = mid)"
-                elif is_same_dmax:
-                    decision = "ACTIVE (above threshold, high = mid)"
-                else:
-                    decision = "INTERMEDIATE"
-
-            set_cell(ws, current_row, 1, p_idx + 1, fill=fill)
-            set_cell(ws, current_row, 2, phase, fill=fill)
-            set_cell(ws, current_row, 3, val, fill=fill, fmt="0.00E+00" if val != 0 and val < 0.01 else "0.############")
-            set_cell(ws, current_row, 4, delta, fill=fill, fmt="0.0000000000")
-            set_cell(ws, current_row, 5, same_d0, fill=fill)
-            set_cell(ws, current_row, 6, same_dmax, fill=fill)
-            set_cell(ws, current_row, 7, decision, fill=fill)
+            set_cell(ws, current_row, 1, a['num'], fill=fill)
+            set_cell(ws, current_row, 2, a['phase'], fill=fill)
+            # Format action value
+            v = a['val']
+            val_fmt = "0.00E+00" if v != 0 and abs(v) < 0.001 else "0.###############"
+            set_cell(ws, current_row, 3, v, fill=fill, fmt=val_fmt)
+            set_cell(ws, current_row, 4, a['how_value_calculated'], fill=fill)
+            set_cell(ws, current_row, 5, a['delta'], fill=fill, fmt="0.0000000000")
+            set_cell(ws, current_row, 6, a['same_d0'], fill=fill)
+            set_cell(ws, current_row, 7, a['same_dmax'], fill=fill)
+            set_cell(ws, current_row, 8, a.get('bracket', ''), fill=fill)
+            set_cell(ws, current_row, 9, a['what_we_did'], fill=fill)
+            set_cell(ws, current_row, 10, a['what_we_got'], fill=fill)
+            set_cell(ws, current_row, 11, a['what_it_means'], fill=fill)
+            set_cell(ws, current_row, 12, a['why'], fill=fill)
+            set_cell(ws, current_row, 13, a.get('bracket_after', ''), fill=fill)
             current_row += 1
 
         # Summary for this action
         current_row += 1
         if max_eq_min and a_max is not None:
             ws.cell(row=current_row, column=1,
-                    value=f"  >> BINARY: MAX = MIN = {a_max:.12g} (the threshold where uint8 rounds from 0 to 1)").font = BOLD
+                    value=f"RESULT: {action_name.upper()} is BINARY. MAX = MIN = {a_max:.15g}").font = Font(bold=True, size=12)
             current_row += 1
             ws.cell(row=current_row, column=1,
-                    value=f"  >> Combined bracket: delta went from saturated ({delta_max:.10g}) directly to D0 ({delta_0:.10g})")
+                    value=f"  The exponential sweep found that delta went from saturated ({delta_max:.10g}) "
+                          f"directly to D0 ({delta_0:.10g}) — no intermediate values exist.")
             current_row += 1
             ws.cell(row=current_row, column=1,
-                    value=f"  >> Binary search narrowed the bracket to threshold = 0.5/255 = {0.5/255:.12g}")
+                    value=f"  Binary search narrowed the combined bracket to the exact threshold: "
+                          f"{a_max:.15g} = 0.5/255 = {0.5/255:.15g}")
+            current_row += 1
+            ws.cell(row=current_row, column=1,
+                    value=f"  This means: any value >= {a_max:.15g} produces FULL effect. "
+                          f"Any value below = ZERO effect. There are exactly 2 bins: OFF and ON.")
         elif a_max is None:
             ws.cell(row=current_row, column=1,
-                    value=f"  >> NO DETECTABLE RANGE -- action has no measurable effect").font = BOLD
+                    value=f"RESULT: {action_name.upper()} — NO DETECTABLE RANGE").font = Font(bold=True, size=12)
         else:
             ws.cell(row=current_row, column=1,
-                    value=f"  >> ANALOG: MAX = {a_max:.10g}, MIN = {a_min:.10g}").font = BOLD
+                    value=f"RESULT: {action_name.upper()} is ANALOG. MAX = {a_max:.10g}, MIN = {a_min:.10g}").font = Font(bold=True, size=12)
 
         current_row += 3
 
-    auto_width(ws)
+    # Set column widths for readability
+    col_widths = {
+        1: 5,    # #
+        2: 16,   # Phase
+        3: 22,   # Action Value
+        4: 55,   # How Value Calculated
+        5: 18,   # Delta
+        6: 12,   # Same D0
+        7: 16,   # Same Saturated
+        8: 35,   # Bracket BEFORE
+        9: 65,   # What We Did
+        10: 70,  # What We Got
+        11: 80,  # What It Means
+        12: 90,  # Decision & Why
+        13: 35,  # Bracket AFTER
+    }
+    for col_num, width in col_widths.items():
+        ws.column_dimensions[get_column_letter(col_num)].width = width
 
 
 # ===== SHEET 8: Summary =====
