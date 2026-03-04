@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-04 - Completed quick task 15: Update Excel with Pure Sutton 5-run results (9 sheets, MAX=MIN=0.00196)
+Last activity: 2026-03-04 - Completed quick task 16: Fix Excel probe display — last probe is VERIFY not BIN SEARCH, validated all 43 midpoint calculations correct
 
 Progress: [██████░░░░] 58%
 
@@ -180,9 +180,10 @@ None.
 | 12 | Deep Sutton transcript analysis + implementation verification: 9 gaps, algorithm O(log i) optimal, uint8 verdict, 5 hallucinations confirmed | 2026-03-04 | 2f8e448 | [12-deep-sutton-transcript-re-read-implement](./quick/12-deep-sutton-transcript-re-read-implement/) |
 | 14 | Pure Sutton single-algorithm discovery: combined bracket binary detection, no pre-classification, no wire precision, 3/3 offline tests | 2026-03-04 | 94ca77c | [14-pure-sutton-discovery-remove-wire-precis](./quick/14-pure-sutton-discovery-remove-wire-precis/) |
 | 15 | Update Excel with Pure Sutton 5-run results: 9 sheets, probe-level data, MAX=MIN=0.00196 for all binary actions | 2026-03-04 | 54cc04c | [15-update-excel-spreadsheet-with-latest-pur](./quick/15-update-excel-spreadsheet-with-latest-pur/) |
+| 16 | Fix Excel probe display: last probe is VERIFY not BIN SEARCH, validated all 43 midpoint calculations correct | 2026-03-04 | 4950565 | [16-fix-excel-probe-display-last-probe-is-ve](./quick/16-fix-excel-probe-display-last-probe-is-ve/) |
 
 ## Session Continuity
 
 Last session: 2026-03-04
-Stopped at: Completed quick-15 (Excel update with pure Sutton results). 9 sheets, all probe data from 5 live runs.
+Stopped at: Completed quick-16 (Excel probe display fix). All midpoint calculations validated correct.
 Resume file: None
