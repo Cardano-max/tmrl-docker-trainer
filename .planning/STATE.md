@@ -12,7 +12,7 @@ See: .planning/PROJECT.md (updated 2026-02-26)
 Phase: 3 of 6 (Knowledge Graph Infrastructure)
 Plan: 3/3 complete
 Status: Phase 3 complete, ready for Phase 4
-Last activity: 2026-03-04 - Completed quick task 12: Deep Sutton transcript analysis + implementation verification (9 gaps, algorithm optimality proof, uint8 verdict)
+Last activity: 2026-03-04 - Completed quick task 14: Pure Sutton single-algorithm discovery rewrite (no pre-classification, combined bracket binary detection, 3/3 offline tests)
 
 Progress: [██████░░░░] 58%
 
@@ -154,6 +154,10 @@ Recent decisions affecting current work:
 - [quick-11]: Wire precision is pure data (no TCP needed) -- adapter always knows its wire format
 - [quick-11]: Nature detection appends probes to self.probes for internal consistency (bug fix)
 - [quick-11]: Wire step floor uses max(search_precision, wire_step) then restores original after binary search
+- [quick-14]: Single exponential sweep discovers binary/analog nature organically -- no pre-classification step
+- [quick-14]: Combined bracket (saturated->D0 directly) means MAX=MIN for binary actions
+- [quick-14]: wire_precision parameter kept in signature for backward compat but ignored internally
+- [quick-14]: detect_action_nature() and _run_binary_discovery() preserved as deprecated (not deleted)
 
 ### Pending Todos
 
@@ -174,9 +178,10 @@ None.
 | 10 | 5-run two-stage validation: 46/46 PASS, all actions BINARY, deterministic, Sutton compliant | 2026-03-03 | de775e1 | [10-run-5-live-discovery-runs-with-two-stage](./quick/10-run-5-live-discovery-runs-with-two-stage/) |
 | 11 | Precision-first discovery rewrite: wire precision API, faithful uint8 quantization, derived probes, wire-step MIN floor, 6/6 offline tests PASS | 2026-03-03 | ec65210 | [11-full-precision-first-rewrite-discover-sy](./quick/11-full-precision-first-rewrite-discover-sy/) |
 | 12 | Deep Sutton transcript analysis + implementation verification: 9 gaps, algorithm O(log i) optimal, uint8 verdict, 5 hallucinations confirmed | 2026-03-04 | 2f8e448 | [12-deep-sutton-transcript-re-read-implement](./quick/12-deep-sutton-transcript-re-read-implement/) |
+| 14 | Pure Sutton single-algorithm discovery: combined bracket binary detection, no pre-classification, no wire precision, 3/3 offline tests | 2026-03-04 | 94ca77c | [14-pure-sutton-discovery-remove-wire-precis](./quick/14-pure-sutton-discovery-remove-wire-precis/) |
 
 ## Session Continuity
 
 Last session: 2026-03-04
-Stopped at: Completed quick-12 (deep Sutton transcript analysis + implementation verification). 12-ANALYSIS.md created with 9 sections, 4 appendices.
+Stopped at: Completed quick-14 (pure Sutton single-algorithm discovery rewrite). 3 tasks, 3 commits, 3/3 offline tests pass.
 Resume file: None
