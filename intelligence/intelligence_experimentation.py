@@ -655,27 +655,30 @@ class FrameBinDiscovery:
         wire_precision: dict = None
     ) -> Tuple[Optional[float], Optional[float]]:
         """
-        Two-stage discovery: detect action nature, then apply appropriate algorithm.
+        Pure Sutton single-algorithm discovery.
 
-        When wire_precision is provided (Sutton: "first find the system's precision"),
-        probe values are DERIVED from the wire format instead of using hardcoded
-        NATURE_PROBE_VALUES, and MIN search stops at the wire step boundary.
+        ONE algorithm handles both binary and analog actions. No pre-classification,
+        no separate binary path. Nature is DISCOVERED by the sweep itself:
 
-        Stage 1: Nature Detection (detect_action_nature)
-            Probe values spanning multiple orders of magnitude.
-            If ALL non-D0 deltas identical -> BINARY
-            If deltas differ -> ANALOG
+            ANALOG:  delta goes saturated -> intermediate -> D0  (two transitions)
+            BINARY:  delta goes saturated -> D0 directly       (one transition)
 
-        Stage 2A: Binary path (_run_binary_discovery)
-            MAX = 1.0 (validated), MIN via binary search. ~6-8 probes total.
+        When binary is detected (saturated -> D0 directly), the MAX bracket and
+        MIN bracket are the SAME bracket. Binary search on this shared bracket
+        finds MAX = MIN = the threshold.
 
-        Stage 2B: Analog path (Sutton's full algorithm)
-            1. Measure D0 = step(action=0)  [already done in Stage 1]
-            2. Find bracket for MAX: large value -> saturated? shrink until bracket found
-            3. Binary search bracket until precision reached
-            4. Find bracket for MIN: find first value == D0
-            5. Binary search for boundary
-            6. Store: MIN, MAX, D per frame
+        Algorithm:
+            1. Measure D0 = probe_fn(0.0)
+            2. Exponential sweep from 1e6 downward
+               - First non-D0 delta = saturated delta (delta_max)
+               - When delta changes from saturated:
+                 - If new delta == D0 -> BINARY: combined bracket (MAX=MIN bracket)
+                 - If new delta != D0 and != saturated -> ANALOG: MAX bracket found
+               - After MAX bracket found (analog), continue sweep for MIN bracket
+            3. Binary search MAX bracket -> MAX
+            4. Binary search MIN bracket -> MIN
+            5. If combined bracket -> MAX = MIN (binary action, 1 bin)
+            6. Nature inferred: 'binary' if combined bracket, 'analog' otherwise
 
         No heuristics. No baseline subtraction. No magic decimals.
         Pure transition search.
@@ -683,46 +686,37 @@ class FrameBinDiscovery:
         Sutton: "Not doing an action is also an action."
         D0 is a REAL transition, not noise to be subtracted.
 
-        The nature detection probes count toward total experiments.
-        Binary detection is DISCOVERED, not hardcoded.
-
         Args:
             probe_fn: Function that probes a single action value and returns ProbeResult.
-            wire_precision: Optional dict with wire format metadata from adapter.
-                Keys: wire_type, wire_bits, wire_min, wire_max,
-                      float_min, float_max, float_step.
+            wire_precision: Accepted for backward compatibility but IGNORED.
+                The algorithm discovers everything from probing alone.
 
         Returns:
             (a_max, a_min) or (None, None) if action has no effect.
         """
         # ===========================================
-        # STAGE 1: Detect action nature (binary vs analog)
+        # STEP 1: Measure D0 = probe_fn(0.0)
+        # Sutton: "not doing an action is also an action"
         # ===========================================
-        nature = self.detect_action_nature(probe_fn, wire_precision=wire_precision)
-
-        if nature == 'none':
-            logger.warning(f"  Action has no detectable effect.")
-            return None, None
-
-        if nature == 'binary':
-            return self._run_binary_discovery(probe_fn, wire_precision=wire_precision)
+        logger.info(f"  [STEP 1] Measure D0 = probe_fn(0.0)")
+        d0_probe = probe_fn(0.0)
+        if d0_probe.valid:
+            self.delta_0 = d0_probe.delta_state
+        else:
+            self.delta_0 = 0.0
+            logger.warning(f"    D0 probe invalid, using 0.0")
+        logger.info(f"    D0 = {self.delta_0:.6f}")
+        logger.info(f"    (Real transition, not noise)")
 
         # ===========================================
-        # STAGE 2B: ANALOG PATH -- Sutton's full algorithm
-        # D0 already measured by detect_action_nature.
-        # For the analog path, we reset delta_max so the exponential
-        # sweep re-establishes it from the LARGEST probe value (1e6),
-        # which is the true saturated delta for analog actions.
+        # STEP 2: Exponential sweep from 1e6 downward
+        # Sutton: "large value -> saturated? shrink until bracket found"
+        # Single sweep discovers MAX bracket, MIN bracket, AND nature.
         # ===========================================
         sequence = self.get_exponential_sequence()
-        self.delta_max = None  # Reset so exponential sweep re-discovers from largest value
+        self.delta_max = None
 
-        # ===========================================
-        # STEP 2: Exponential bracketing for MAX
-        # Sutton: "large value -> saturated? shrink until bracket found"
-        # Then continue descent for MIN: "find first value == D0"
-        # ===========================================
-        logger.info(f"  [STEP 2] Exponential bracketing (analog path)...")
+        logger.info(f"  [STEP 2] Exponential sweep (pure Sutton single algorithm)...")
 
         max_bracket_low = None
         max_bracket_high = None
@@ -733,6 +727,7 @@ class FrameBinDiscovery:
         prev_delta = None
         found_max_bracket = False
         found_min_bracket = False
+        combined_bracket = False  # True when MAX and MIN share the same bracket (binary)
 
         for val in sequence:
             pr = probe_fn(val)
@@ -746,6 +741,15 @@ class FrameBinDiscovery:
 
             # First valid probe = saturated delta (highest action value)
             if self.delta_max is None:
+                # Check if even the largest probe is D0 (action has no effect)
+                if self._is_same_as_delta0(delta):
+                    # Largest value produces D0 -- might still find activity lower.
+                    # Don't set delta_max yet, keep looking.
+                    self.delta_max = delta
+                    logger.info(f"    (first probe delta = D0 = {delta:.6f})")
+                    prev_val = val
+                    prev_delta = delta
+                    continue
                 self.delta_max = delta
                 logger.info(f"    (saturated delta = {delta:.6f})")
                 prev_val = val
@@ -758,22 +762,38 @@ class FrameBinDiscovery:
                     prev_val = val
                     prev_delta = delta
                 else:
-                    max_bracket_low = val
-                    max_bracket_high = prev_val
-                    found_max_bracket = True
-                    logger.info(
-                        f"    >>> MAX BRACKET: [{val:.6f}, {prev_val:.6f}]"
-                        f" (delta changed from {prev_delta:.6f} to {delta:.6f})"
-                    )
-                    prev_val = val
-                    prev_delta = delta
-                    continue
+                    # Delta changed from saturated. But is it D0 or intermediate?
+                    if self._is_same_as_delta0(delta):
+                        # Saturated -> D0 DIRECTLY = BINARY action
+                        # MAX and MIN share the same bracket
+                        max_bracket_low = val
+                        max_bracket_high = prev_val
+                        min_bracket_low = val
+                        min_bracket_high = prev_val
+                        found_max_bracket = True
+                        found_min_bracket = True
+                        combined_bracket = True
+                        logger.info(
+                            f"    >>> COMBINED BRACKET (BINARY): [{val:.6f}, {prev_val:.6f}]"
+                            f" (delta went from saturated {prev_delta:.6f} directly to D0 {delta:.6f})"
+                        )
+                        break
+                    else:
+                        # Saturated -> intermediate = ANALOG action
+                        max_bracket_low = val
+                        max_bracket_high = prev_val
+                        found_max_bracket = True
+                        logger.info(
+                            f"    >>> MAX BRACKET: [{val:.6f}, {prev_val:.6f}]"
+                            f" (delta changed from {prev_delta:.6f} to {delta:.6f})"
+                        )
+                        prev_val = val
+                        prev_delta = delta
+                        continue
 
-            # MIN bracket: find where delta becomes same as D0
-            # discovery: "find first value == D0" (action has no effect beyond coasting)
+            # MIN bracket: find where delta becomes same as D0 (analog path)
             if found_max_bracket and not found_min_bracket:
                 if self._is_same_as_delta0(delta):
-                    # Delta same as D0 → action no longer matters
                     min_bracket_low = val
                     min_bracket_high = prev_val
                     found_min_bracket = True
@@ -786,84 +806,103 @@ class FrameBinDiscovery:
                     prev_val = val
                     prev_delta = delta
 
-        # Edge case: only one probe or first probe only
+        # Edge case: no valid probes at all
         if self.delta_max is None:
             logger.warning(f"  No valid probes")
             return None, None
 
-        # Edge case: saturated delta IS D0 → action has no effect at all
-        # Only applies if no bracket was found. If a bracket was found during
-        # exponential descent, the action clearly has a detectable range even
-        # if the saturated value happens to coincide with D0 (measurement noise).
+        # Edge case: saturated delta IS D0 and no bracket found
+        # Action has no detectable effect at any magnitude
         if self._is_same_as_delta0(self.delta_max) and not found_max_bracket:
             logger.warning(f"  Saturated delta ({self.delta_max:.6f}) same as D0 "
                           f"({self.delta_0:.6f}). Action has no detectable effect.")
+            self.nature = 'none'
             return None, None
 
-        # Edge case: never found MAX bracket (all probes saturated)
-        # This means the action is BINARY: any positive value produces
-        # the same saturated delta. MAX = first tested value (largest).
+        # Edge case: never found MAX bracket (all probes saturated, none == D0)
+        # This means every tested value from 1e6 down to 1e-6 produced
+        # the same saturated delta. The action is BINARY with threshold below 1e-6.
         if not found_max_bracket:
             self.a_max = sequence[0]  # Largest value tested
-            logger.info(f"  All probes saturated → BINARY action. MAX = {self.a_max}")
-
-            # If also no MIN bracket, every tested value had effect.
-            # This happens with digital inputs (any value > 0.0 = ON).
-            # Set MIN = smallest tested value. Binary detection in build_bins()
-            # will see delta_at_min == delta_max (same effect for all values).
-            if not found_min_bracket:
-                self.a_min = sequence[-1]
-                self.delta_at_min = self.delta_max  # All values produce same delta
-                logger.info(f"  BINARY: no brackets found but delta_max != D0.")
-                logger.info(f"  MIN = {self.a_min} (smallest tested, still had effect)")
-                logger.info(f"  MAX = {self.a_max}, delta_at_min = delta_max = {self.delta_max:.6f}")
-                return self.a_max, self.a_min
+            self.a_min = sequence[-1]  # Smallest value tested
+            self.delta_at_min = self.delta_max  # All values produce same delta
+            self.nature = 'binary'
+            logger.info(f"  All probes saturated -> BINARY action.")
+            logger.info(f"  MAX = {self.a_max}, MIN = {self.a_min}")
+            logger.info(f"  delta_at_min = delta_max = {self.delta_max:.6f}")
+            return self.a_max, self.a_min
 
         # ===========================================
         # STEP 3: Binary search for MAX
         # Sutton: "Binary search bracket until precision reached"
         # ===========================================
-        if found_max_bracket:
+        if combined_bracket:
+            # Binary action: MAX and MIN share the same bracket.
+            # Binary search this bracket once -- result is both MAX and MIN.
+            logger.info(
+                f"  [STEP 3] Binary search COMBINED bracket (binary action) in "
+                f"[{max_bracket_low:.6f}, {max_bracket_high:.6f}]..."
+            )
+            # Use _binary_search_min because the bracket goes from D0 (low) to
+            # saturated (high), and we want the smallest value that has effect.
+            self.a_min, bs_steps = self._binary_search_min(
+                probe_fn, max_bracket_low, max_bracket_high
+            )
+            self.a_max = self.a_min  # Binary: MAX = MIN = threshold
+            self.nature = 'binary'
+
+            # Record delta_at_min
+            pr_min = probe_fn(self.a_min)
+            self.delta_at_min = pr_min.delta_state if pr_min.valid else self.delta_max
+
+            logger.info(f"    >>> BINARY: MAX = MIN = {self.a_min:.10g} ({bs_steps} steps)")
+            logger.info(f"    delta_max = {self.delta_max:.10g}")
+            logger.info(f"    delta_at_min = {self.delta_at_min:.10g}")
+        else:
+            # Analog action: separate MAX and MIN brackets
             logger.info(
                 f"  [STEP 3] Binary search for MAX in "
                 f"[{max_bracket_low:.6f}, {max_bracket_high:.6f}]..."
             )
-            self.a_max, bs_steps = self._binary_search_max(
+            self.a_max, bs_steps_max = self._binary_search_max(
                 probe_fn, max_bracket_low, max_bracket_high
             )
-            logger.info(f"    >>> MAX = {self.a_max:.6f} ({bs_steps} binary search steps)")
+            logger.info(f"    >>> MAX = {self.a_max:.6f} ({bs_steps_max} binary search steps)")
 
-        # ===========================================
-        # STEP 4-5: Binary search for MIN
-        # discovery: "find first value != D0" then "binary search for boundary"
-        # Uses D0 comparison: delta == D0 means no effect.
-        # ===========================================
-        if found_min_bracket:
-            logger.info(
-                f"  [STEP 4-5] Binary search for MIN in "
-                f"[{min_bracket_low:.6f}, {min_bracket_high:.6f}]..."
-            )
-            self.a_min, bs_steps = self._binary_search_min(
-                probe_fn, min_bracket_low, min_bracket_high
-            )
-            logger.info(f"    >>> MIN = {self.a_min:.6f} ({bs_steps} binary search steps)")
+            # ===========================================
+            # STEP 4-5: Binary search for MIN
+            # Sutton: "find first value != D0" then "binary search for boundary"
+            # ===========================================
+            if found_min_bracket:
+                logger.info(
+                    f"  [STEP 4-5] Binary search for MIN in "
+                    f"[{min_bracket_low:.6f}, {min_bracket_high:.6f}]..."
+                )
+                self.a_min, bs_steps_min = self._binary_search_min(
+                    probe_fn, min_bracket_low, min_bracket_high
+                )
+                logger.info(f"    >>> MIN = {self.a_min:.6f} ({bs_steps_min} binary search steps)")
 
-            # Probe at MIN to record delta_at_min (used for binary detection)
-            pr_min = probe_fn(self.a_min)
-            self.delta_at_min = pr_min.delta_state
-        else:
-            if found_max_bracket:
+                # Probe at MIN to record delta_at_min
+                pr_min = probe_fn(self.a_min)
+                self.delta_at_min = pr_min.delta_state
+            else:
+                # MIN not bracketed: delta kept changing all the way down.
+                # Use smallest tested value.
                 self.a_min = sequence[-1]
                 logger.warning(
                     f"  MIN not bracketed (delta kept changing). "
                     f"Using smallest test value: {self.a_min:.6f}"
                 )
-            else:
-                # All probes saturated AND delta_max == D0
-                # (handled above, but safety fallback)
-                return None, None
 
-        # D0 already measured in Step 1 — stored in self.delta_0
+            self.nature = 'analog'
+
+        logger.info(f"  [DISCOVERY COMPLETE] {self.action_name}")
+        logger.info(f"    Nature = {self.nature}")
+        logger.info(f"    MAX    = {self.a_max:.10g}")
+        logger.info(f"    MIN    = {self.a_min:.10g}")
+        logger.info(f"    D0     = {self.delta_0:.10g}")
+        logger.info(f"    Dmax   = {self.delta_max:.10g}")
 
         return self.a_max, self.a_min
 
